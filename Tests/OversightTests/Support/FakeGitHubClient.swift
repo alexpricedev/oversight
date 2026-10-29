@@ -65,11 +65,11 @@ actor FakeGitHubClient: GitHubClientProtocol {
         accountsUsed = []
     }
 
-    func listRepos(account: String) async throws -> [Repo] {
+    func listRepos(account: Owner) async throws -> [Repo] {
         listRepoCalls += 1
-        accountsUsed.insert(account)
-        if let error = ownerErrors[account] { throw error }
-        return reposByOwner[account] ?? []
+        accountsUsed.insert(account.login)
+        if let error = ownerErrors[account.login] { throw error }
+        return reposByOwner[account.login] ?? []
     }
 
     func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun] {

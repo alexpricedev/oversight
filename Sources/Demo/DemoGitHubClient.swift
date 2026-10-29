@@ -5,8 +5,8 @@ import Foundation
 actor DemoGitHubClient: GitHubClientProtocol {
     private let data = DemoData()
 
-    func listRepos(account: String) async throws -> [Repo] {
-        data.repos.filter { $0.owner.caseInsensitiveCompare(account) == .orderedSame }
+    func listRepos(account: Owner) async throws -> [Repo] {
+        data.repos.filter { $0.owner.caseInsensitiveCompare(account.login) == .orderedSame }
     }
 
     func recentRuns(repo: RepoID, account _: String) async throws -> [WorkflowRun] {

@@ -370,7 +370,7 @@ final class DashboardModel {
 
     private func loadRepos(account: Owner, now: Date) async {
         do {
-            let repos = try await client.listRepos(account: account.login)
+            let repos = try await client.listRepos(account: account)
             merge(repos: repos, for: account)
             schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
         } catch let error as GitHubError {

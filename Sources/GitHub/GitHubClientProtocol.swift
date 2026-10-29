@@ -8,9 +8,9 @@ import Foundation
 /// belongs to it.
 protocol GitHubClientProtocol: Sendable {
     /// Every repository the account's token can see, including repositories
-    /// owned by organizations the account belongs to. Archived repositories and
-    /// forks are excluded.
-    func listRepos(account: String) async throws -> [Repo]
+    /// owned by organizations a user account belongs to. Archived repositories
+    /// and forks are excluded.
+    func listRepos(account: Owner) async throws -> [Repo]
 
     /// The most recent workflow runs in a repository.
     func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun]

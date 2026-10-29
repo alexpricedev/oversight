@@ -72,17 +72,23 @@ UserDefaults or to disk.
 
 ### Organizations
 
-An organization you belong to doesn't need a token of its own. After a refresh,
-**Settings → Organizations** lists the organizations your token can see, with a
-switch for each; you can also add one by name. Switch one on and its repositories
-join the three columns, read with your account's token. Organizations are off
-until you turn them on, so a large org you belong to stays out of the way until
-you want it.
+There are two ways to watch an organization's repositories.
 
-The token itself still has to cover those repositories: select the
-organization's repositories under **Repository access** when you create it, and
-the organization has to approve the token. If it hasn't, the organization still
-appears in Settings with "No repositories visible" so you know where to look.
+**With your own token.** After a refresh, **Settings → Organizations** lists
+the organizations your token can see, with a switch for each; you can also add
+one by name. Switch one on and its repositories join the three columns, read
+with your account's token. Organizations are off until you turn them on, so a
+large org you belong to stays out of the way until you want it. The token has
+to cover those repositories: select them under **Repository access** when you
+create it, and the organization has to approve it. Until it does, the
+organization appears in Settings with "No repositories visible" so you know
+where to look.
+
+**With a token owned by the organization.** When you create the token, set
+**Resource owner** to the organization. That token can see that organization
+and nothing else, so add it in **Settings → Add owner…** with the
+organization's name, exactly like a user. It becomes its own account, with its
+own rate-limit allowance.
 
 ## What it shows
 

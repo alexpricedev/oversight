@@ -32,7 +32,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 3)
 
-        let repos = try await client.listRepos(account: owner.login)
+        let repos = try await client.listRepos(account: owner)
 
         #expect(repos.map(\.id.slug) == ["alexpricedev/atlas", "someone-else/someone-atlas"])
         let requests = await transport.recordedRequests()
@@ -54,7 +54,7 @@ struct GitHubAPIClientTests {
         let client = GitHubAPIClient(transport: transport, tokenProvider: { _ in nil })
 
         do {
-            _ = try await client.listRepos(account: owner.login)
+            _ = try await client.listRepos(account: owner)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -77,7 +77,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
 
         do {
-            _ = try await client.listRepos(account: owner.login)
+            _ = try await client.listRepos(account: owner)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -247,7 +247,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        _ = try await client.listRepos(account: owner.login)
+        _ = try await client.listRepos(account: owner)
         var info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
 
@@ -263,7 +263,7 @@ struct GitHubAPIClientTests {
             switch request.url?.path {
             case "/user": try .json(Fixtures.data("user"))
             case "/users/tycho-station": try .json(Fixtures.data("org_user"))
-            case "/user/repos": try .json(Fixtures.data("repos_page_1"))
+            case "/orgs/tycho-station/repos": try .json(Fixtures.data("repos_page_1"))
             default: .error("Not Found", status: 404)
             }
         }
@@ -271,6 +271,42 @@ struct GitHubAPIClientTests {
 
         let verified = try await client.verifyOwner(login: "tycho-station", token: "a-token")
         #expect(verified == Owner(login: "tycho-station", kind: .organization))
+    }
+
+    @Test("An organization-owned token verifies even when /user refuses it")
+    func verifyOrganizationOwnedToken() async throws {
+        let transport = StubTransport { request in
+            switch request.url?.path {
+            case "/user": .error("Resource not accessible by personal access token", status: 403)
+            case "/users/tycho-station": try .json(Fixtures.data("org_user"))
+            case "/orgs/tycho-station/repos": try .json(Fixtures.data("repos_page_1"))
+            default: .error("Not Found", status: 404)
+            }
+        }
+        let client = makeClient(transport)
+
+        let verified = try await client.verifyOwner(login: "tycho-station", token: "a-token")
+
+        #expect(verified == Owner(login: "tycho-station", kind: .organization))
+    }
+
+    @Test("An organization account lists repositories through /orgs, not /user/repos")
+    func listsOrganizationRepos() async throws {
+        let transport = StubTransport { request in
+            if request.url?.path == "/orgs/tycho-station/repos" {
+                return try .json(Fixtures.data("repos_page_1"))
+            }
+            return .error("Not Found", status: 404)
+        }
+        let client = makeClient(transport)
+
+        let repos = try await client.listRepos(
+            account: Owner(login: "tycho-station", kind: .organization)
+        )
+
+        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas"])
+        let requests = await transport.recordedRequests()
+        #expect(requests.allSatisfy { $0.url?.path == "/orgs/tycho-station/repos" })
     }
 
     @Test("Verifying an owner surfaces a rejected token")

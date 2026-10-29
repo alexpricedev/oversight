@@ -41,8 +41,9 @@ an org-owned token), so the app holds **one token per account**.
   its own repositories and those of every organization the account belongs to;
   the organization never gets a token of its own.
 - Settings lists the accounts. "Add owner" asks for the account name and a
-  token, checks the token with `GET /user` (and that it can list repos), then
-  saves it to the Keychain.
+  token, checks that the token can list that owner's repositories, then saves
+  it to the Keychain. `GET /user` is checked when the token allows it, but an
+  organization-owned token may refuse it and is still valid.
 - Settings also lists the organizations found in each account's repo list,
   each with a switch, and accepts an organization added by name. Only
   switched-on organizations are shown and polled, and the set is persisted in
@@ -59,7 +60,8 @@ Per account, using that account's token:
 
 | Need | Endpoint |
 | --- | --- |
-| Repos the token can see | `GET /user/repos?per_page=100&affiliation=owner,organization_member` (paginate); grouped by `owner.login`; archived repos and forks excluded |
+| Repos a user account's token can see | `GET /user/repos?per_page=100&affiliation=owner,organization_member` (paginate); grouped by `owner.login`; archived repos and forks excluded |
+| Repos an organization account's token can see | `GET /orgs/{org}/repos?per_page=100&type=all` (paginate); archived repos and forks excluded |
 | Runs in a repo | `GET /repos/{owner}/{repo}/actions/runs?per_page=20` |
 | Deploys in a repo | `GET /repos/{owner}/{repo}/actions/workflows/deploy.yml/runs?per_page=5` (a 404 means the repo has no deploy workflow) |
 | Open PRs and issues | `GET /search/issues?q=is:open+is:pr+user:{owner}` and `...is:issue...` (one call each per owner; use `org:` for orgs) |
