@@ -34,12 +34,18 @@ jobs, merging, commenting), Asana, non-GitHub CI.
 
 ## Accounts and tokens
 
-GitHub's fine-grained personal access tokens belong to one owner (a user or an
-org), so the app holds **one token per owner**.
+GitHub's fine-grained personal access tokens belong to one account (a user or
+an org-owned token), so the app holds **one token per account**.
 
-- Settings lists the owners. "Add owner" asks for the owner name and a token,
-  checks the token with `GET /user` (and that it can list repos), then saves it
-  to the Keychain.
+- The account and the repo owner are separate ideas. An account's token reads
+  its own repositories and those of every organization the account belongs to;
+  the organization never gets a token of its own.
+- Settings lists the accounts. "Add owner" asks for the account name and a
+  token, checks the token with `GET /user` (and that it can list repos), then
+  saves it to the Keychain.
+- Settings also lists the organizations discovered under each account, each
+  with a switch. Only switched-on organizations are shown and polled, and the
+  set is persisted in UserDefaults (`includedOrgs`).
 - Required token permissions, all **read-only**: Metadata, Actions, Pull
   requests, Issues. Settings shows this list with a link to GitHub's
   token-creation page.
@@ -47,11 +53,12 @@ org), so the app holds **one token per owner**.
 
 ## Data and GitHub API
 
-Per owner, using that owner's token:
+Per account, using that account's token:
 
 | Need | Endpoint |
 | --- | --- |
-| Repos the token can see | `GET /user/repos?per_page=100` (paginate), filtered to repos whose `owner.login` is this owner; archived repos excluded |
+| Repos the token can see | `GET /user/repos?per_page=100&affiliation=owner,organization_member` (paginate); grouped by `owner.login`; archived repos and forks excluded |
+| Organizations under an account | `GET /user/orgs?per_page=100` (paginate); best effort, so a token without organization access still works |
 | Runs in a repo | `GET /repos/{owner}/{repo}/actions/runs?per_page=20` |
 | Deploys in a repo | `GET /repos/{owner}/{repo}/actions/workflows/deploy.yml/runs?per_page=5` (a 404 means the repo has no deploy workflow) |
 | Open PRs and issues | `GET /search/issues?q=is:open+is:pr+user:{owner}` and `...is:issue...` (one call each per owner; use `org:` for orgs) |
@@ -104,6 +111,8 @@ fails shows a small warning icon on its rows.
 ## Settings
 
 - Owners: add, remove, replace token.
+- Organizations: one switch per discovered organization, showing which
+  account reads it and how many repositories it has. Off by default.
 - Repos to hide: a list of `owner/repo` to leave out (for example archived
   experiments that aren't archived on GitHub).
 

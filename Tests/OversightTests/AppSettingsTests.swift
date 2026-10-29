@@ -63,4 +63,23 @@ struct AppSettingsTests {
         reloaded.unhide("alexpricedev/old-lab")
         #expect(reloaded.hiddenRepos.isEmpty)
     }
+
+    @Test("Included organizations are persisted and matched case-insensitively")
+    func includedOrgs() {
+        let defaults = makeDefaults()
+        let settings = AppSettings(defaults: defaults, seedDefaultOwner: false)
+        #expect(settings.includedOrgs.isEmpty)
+
+        settings.includeOrg("wearenaitiv")
+        settings.includeOrg("WEARENAITIV")
+        #expect(settings.includedOrgs == ["wearenaitiv"])
+        #expect(settings.includesOrg("WeAreNaItIv"))
+
+        settings.excludeOrg("wearenaitiv")
+        #expect(settings.includedOrgs.isEmpty)
+
+        settings.includeOrg("wearenaitiv")
+        let reloaded = AppSettings(defaults: defaults, seedDefaultOwner: false)
+        #expect(reloaded.includedOrgs == ["wearenaitiv"])
+    }
 }

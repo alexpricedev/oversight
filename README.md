@@ -41,9 +41,9 @@ renaming a source file.
 
 ## Setting up a token
 
-Oversight needs one fine-grained personal access token per owner (a user or an
-organization), because GitHub's fine-grained tokens are scoped to a single
-owner.
+Oversight needs one fine-grained personal access token per account (a user, or
+an organization that issues org-owned tokens), because GitHub's fine-grained
+tokens are scoped to a single owner.
 
 1. Create a token at
    [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
@@ -69,6 +69,19 @@ The first owner, `alexpricedev`, is already configured; it just needs a token.
 Tokens are stored as generic-password items in your login keychain under
 `com.chptrs.oversight.tokens`, one per owner. Nothing secret is written to
 UserDefaults or to disk.
+
+### Organizations
+
+An organization you belong to doesn't need a token of its own. After a refresh,
+**Settings → Organizations** lists every organization your token can see, with
+a switch for each. Switch one on and its repositories join the three columns,
+read with your account's token. Organizations are off until you turn them on,
+so a large org you belong to stays out of the way until you want it.
+
+The token itself still has to cover those repositories: select the
+organization's repositories under **Repository access** when you create it, and
+the organization has to approve the token. If it hasn't, the organization still
+appears in Settings with "No repositories visible" so you know where to look.
 
 ## What it shows
 

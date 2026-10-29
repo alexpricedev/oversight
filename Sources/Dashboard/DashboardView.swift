@@ -39,6 +39,9 @@ struct DashboardView: View {
         .onChange(of: env.settings.hiddenRepos) { _, _ in
             Task { await env.model.settingsDidChange() }
         }
+        .onChange(of: env.settings.includedOrgs) { _, _ in
+            Task { await env.model.settingsDidChange() }
+        }
         .searchable(text: $env.repoFilter, placement: .toolbar, prompt: "Filter repositories")
         .toolbar {
             ToolbarItem {
@@ -129,11 +132,11 @@ struct OwnerFilterMenu: View {
                 }
             }
 
-            if !env.model.owners.isEmpty {
+            if !env.model.filterOwners.isEmpty {
                 Divider()
             }
 
-            ForEach(env.model.owners) { owner in
+            ForEach(env.model.filterOwners) { owner in
                 Button {
                     env.ownerFilter = owner.login
                 } label: {

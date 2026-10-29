@@ -4,10 +4,10 @@ struct RepoFetchResult {
     let repo: Repo
     let runs: Result<[WorkflowRun], GitHubError>
 
-    static func fetch(repo: Repo, client: any GitHubClientProtocol) async -> RepoFetchResult {
+    static func fetch(repo: Repo, account: String, client: any GitHubClientProtocol) async -> RepoFetchResult {
         await RepoFetchResult(
             repo: repo,
-            runs: capture { try await client.recentRuns(repo: repo.id, owner: repo.owner) }
+            runs: capture { try await client.recentRuns(repo: repo.id, account: account) }
         )
     }
 }

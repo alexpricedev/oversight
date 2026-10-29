@@ -35,6 +35,44 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Organizations") {
+                let organizations = env.model.organizations
+                if organizations.isEmpty {
+                    Text("No organizations found yet. Organizations you belong to appear here after a refresh.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(organizations) { organization in
+                        Toggle(isOn: Binding(
+                            get: { env.settings.includesOrg(organization.owner.login) },
+                            set: { isIncluded in
+                                if isIncluded {
+                                    env.settings.includeOrg(organization.owner.login)
+                                } else {
+                                    env.settings.excludeOrg(organization.owner.login)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(organization.owner.login)
+                                        .fontWeight(.medium)
+                                    Badge(text: "Organization")
+                                }
+                                Text(organization.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                    }
+
+                    Text("Organization repositories are read with the token of the account that belongs to them.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
             Section("Repositories to hide") {
                 if sortedHidden.isEmpty {
                     Text("No repositories hidden.")

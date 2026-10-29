@@ -17,7 +17,7 @@ struct GitHubAPIClientTests {
         )
     }
 
-    @Test("The repo list paginates, then drops archived repos, forks and other owners")
+    @Test("The repo list paginates, keeps organization repos, and drops archived repos and forks")
     func listsPagedReposAndFilters() async throws {
         let transport = StubTransport { request in
             let page = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
@@ -32,11 +32,35 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 3)
 
-        let repos = try await client.listRepos(owner: owner)
+        let repos = try await client.listRepos(account: owner.login)
 
-        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas"])
+        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas", "someone-else/someone-atlas"])
         let requests = await transport.recordedRequests()
         #expect(requests.count == 2)
+        // Collaborator-only repositories belong to somebody else, so the
+        // request asks for the account's own repos and its organizations'.
+        let firstURL = requests.first.flatMap(\.url)
+        let components = firstURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let affiliation = components?
+            .queryItems?
+            .first { $0.name == "affiliation" }?
+            .value
+        #expect(affiliation == "owner,organization_member")
+    }
+
+    @Test("Organizations come from /user/orgs and only organization accounts are kept")
+    func listsOrganizations() async throws {
+        let transport = StubTransport { request in
+            if request.url?.path == "/user/orgs" {
+                return .json(Data(#"[{"login":"wearenaitiv","type":"Organization"},{"login":"alexpricedev","type":"User"}]"#.utf8))
+            }
+            return .error("Not Found", status: 404)
+        }
+        let client = makeClient(transport)
+
+        let organizations = try await client.organizations(account: owner.login)
+
+        #expect(organizations == [Owner(login: "wearenaitiv", kind: .organization)])
     }
 
     @Test("A missing token fails before any request is made")
@@ -45,7 +69,7 @@ struct GitHubAPIClientTests {
         let client = GitHubAPIClient(transport: transport, tokenProvider: { _ in nil })
 
         do {
-            _ = try await client.listRepos(owner: owner)
+            _ = try await client.listRepos(account: owner.login)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -68,7 +92,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
 
         do {
-            _ = try await client.listRepos(owner: owner)
+            _ = try await client.listRepos(account: owner.login)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -89,7 +113,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
         let repo = RepoID(owner: "alexpricedev", name: "atlas")
 
-        let rows = try await client.openPullRequests(repo: repo, owner: owner.login)
+        let rows = try await client.openPullRequests(repo: repo, account: owner.login)
 
         #expect(rows.count == 2)
         #expect(rows.map(\.number) == [91, 73])
@@ -117,7 +141,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        let rows = try await client.openIssues(owner: owner)
+        let rows = try await client.openIssues(owner: owner, account: owner.login)
 
         #expect(rows.map(\.number).sorted() == [33, 34])
         #expect(rows.first { $0.number == 33 }?.labels == ["bug", "ci"])
@@ -138,7 +162,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 1)
 
-        let rows = try await client.openIssues(owner: owner)
+        let rows = try await client.openIssues(owner: owner, account: owner.login)
 
         #expect(rows.map(\.number).sorted() == [33, 34])
         let requests = await transport.recordedRequests()
@@ -152,7 +176,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        _ = try await client.openIssues(owner: Owner(login: "tycho-station", kind: .organization))
+        _ = try await client.openIssues(owner: Owner(login: "tycho-station", kind: .organization), account: "tycho-station")
 
         let requests = await transport.recordedRequests()
         let query = try URLComponents(url: #require(requests.first?.url), resolvingAgainstBaseURL: false)?
@@ -171,7 +195,7 @@ struct GitHubAPIClientTests {
 
         let rollup = try await client.ciRollup(
             repo: repo,
-            owner: owner.login,
+            account: owner.login,
             headSHA: "9999999999999999999999999999999999999999"
         )
 
@@ -198,8 +222,8 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        let first = try await client.recentRuns(repo: repo, owner: owner.login)
-        let second = try await client.recentRuns(repo: repo, owner: owner.login)
+        let first = try await client.recentRuns(repo: repo, account: owner.login)
+        let second = try await client.recentRuns(repo: repo, account: owner.login)
 
         #expect(first.count == 4)
         #expect(second.count == first.count)
@@ -237,11 +261,11 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        _ = try await client.listRepos(owner: owner)
+        _ = try await client.listRepos(account: owner.login)
         var info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
 
-        _ = try await client.openIssues(owner: owner)
+        _ = try await client.openIssues(owner: owner, account: owner.login)
         info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
         #expect(info?.limit == 5000)

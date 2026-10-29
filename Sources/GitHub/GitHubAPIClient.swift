@@ -1,7 +1,8 @@
 import Foundation
 
 /// Talks to the GitHub REST API. One instance is shared by the app; each call
-/// picks the token belonging to the repository's owner.
+/// names the account whose token pays for it. Organization repositories are
+/// read with the token of the account that belongs to the organization.
 actor GitHubAPIClient: GitHubClientProtocol {
     private let transport: any HTTPTransport
     private let cache: ETagCache
@@ -30,8 +31,8 @@ actor GitHubAPIClient: GitHubClientProtocol {
 
     // MARK: - GitHubClientProtocol
 
-    func listRepos(owner: Owner) async throws -> [Repo] {
-        let token = try token(for: owner.login)
+    func listRepos(account: String) async throws -> [Repo] {
+        let token = try token(for: account)
         var repos: [Repo] = []
         var page = 1
         while page <= 20 {
@@ -42,31 +43,55 @@ actor GitHubAPIClient: GitHubClientProtocol {
                     URLQueryItem(name: "page", value: String(page)),
                     URLQueryItem(name: "sort", value: "pushed"),
                     URLQueryItem(name: "direction", value: "desc"),
+                    // Repositories you own plus the ones your organizations
+                    // own. Collaborator-only repos belong to somebody else.
+                    URLQueryItem(name: "affiliation", value: "owner,organization_member"),
                 ]
             )
-            let payloads: [RepoPayload] = try await fetchValue(url: url, token: token, tokenOwner: owner.login)
+            let payloads: [RepoPayload] = try await fetchValue(url: url, token: token, tokenOwner: account)
             repos.append(contentsOf: payloads.compactMap { $0.toRepo() })
             if payloads.count < pageSize { break }
             page += 1
         }
         return repos
-            .filter { $0.id.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
             .filter { !$0.isArchived && !$0.isFork }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .sorted { $0.id.slug.localizedStandardCompare($1.id.slug) == .orderedAscending }
     }
 
-    func recentRuns(repo: RepoID, owner: String) async throws -> [WorkflowRun] {
-        let token = try token(for: owner)
+    func organizations(account: String) async throws -> [Owner] {
+        let token = try token(for: account)
+        var organizations: [Owner] = []
+        var page = 1
+        while page <= 10 {
+            let url = try makeURL(
+                path: "/user/orgs",
+                query: [
+                    URLQueryItem(name: "per_page", value: String(pageSize)),
+                    URLQueryItem(name: "page", value: String(page)),
+                ]
+            )
+            let payloads: [UserPayload] = try await fetchValue(url: url, token: token, tokenOwner: account)
+            organizations.append(contentsOf: payloads
+                .filter { $0.type.caseInsensitiveCompare("Organization") == .orderedSame }
+                .map { Owner(login: $0.login, kind: .organization) })
+            if payloads.count < pageSize { break }
+            page += 1
+        }
+        return organizations
+    }
+
+    func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun] {
+        let token = try token(for: account)
         let url = try makeURL(
             path: "/repos/\(repo.owner)/\(repo.name)/actions/runs",
             query: [URLQueryItem(name: "per_page", value: "20")]
         )
-        let response: WorkflowRunsResponse = try await fetchValue(url: url, token: token, tokenOwner: owner)
+        let response: WorkflowRunsResponse = try await fetchValue(url: url, token: token, tokenOwner: account)
         return response.workflowRuns
     }
 
-    func openPullRequests(repo: RepoID, owner: String) async throws -> [PullRequestRow] {
-        let token = try token(for: owner)
+    func openPullRequests(repo: RepoID, account: String) async throws -> [PullRequestRow] {
+        let token = try token(for: account)
         var rows: [PullRequestRow] = []
         var page = 1
         while page <= 10 {
@@ -78,7 +103,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
                     URLQueryItem(name: "page", value: String(page)),
                 ]
             )
-            let payloads: [PullPayload] = try await fetchValue(url: url, token: token, tokenOwner: owner)
+            let payloads: [PullPayload] = try await fetchValue(url: url, token: token, tokenOwner: account)
             rows.append(contentsOf: payloads.map { $0.toRow(repo: repo) })
             if payloads.count < pageSize { break }
             page += 1
@@ -86,8 +111,8 @@ actor GitHubAPIClient: GitHubClientProtocol {
         return rows
     }
 
-    func openIssues(owner: Owner) async throws -> [IssueRow] {
-        let token = try token(for: owner.login)
+    func openIssues(owner: Owner, account: String) async throws -> [IssueRow] {
+        let token = try token(for: account)
         let query = "is:open is:issue \(owner.kind.searchQualifier):\(owner.login)"
         var rows: [IssueRow] = []
         var page = 1
@@ -100,7 +125,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
                     URLQueryItem(name: "page", value: String(page)),
                 ]
             )
-            let response: SearchResponse = try await fetchValue(url: url, token: token, tokenOwner: owner.login)
+            let response: SearchResponse = try await fetchValue(url: url, token: token, tokenOwner: account)
             // Search already filters to issues, but drop anything that is a
             // pull request so the two sections can never overlap.
             rows.append(contentsOf: response.items.compactMap { $0.toIssueRow() })
@@ -110,9 +135,9 @@ actor GitHubAPIClient: GitHubClientProtocol {
         return rows.filter { $0.repo.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
     }
 
-    func ciRollup(repo: RepoID, owner: String, headSHA: String) async throws -> CIRollup {
+    func ciRollup(repo: RepoID, account: String, headSHA: String) async throws -> CIRollup {
         guard !headSHA.isEmpty else { return .none }
-        let token = try token(for: owner)
+        let token = try token(for: account)
         let url = try makeURL(
             path: "/repos/\(repo.owner)/\(repo.name)/actions/runs",
             query: [
@@ -120,7 +145,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
                 URLQueryItem(name: "per_page", value: "20"),
             ]
         )
-        let response: WorkflowRunsResponse = try await fetchValue(url: url, token: token, tokenOwner: owner)
+        let response: WorkflowRunsResponse = try await fetchValue(url: url, token: token, tokenOwner: account)
         return CIRollup.from(response.workflowRuns)
     }
 
@@ -173,15 +198,15 @@ actor GitHubAPIClient: GitHubClientProtocol {
         return Owner(login: trimmed, kind: kind)
     }
 
-    func rateLimit(for owner: String) async -> RateLimitInfo? {
-        await ledger.info(for: owner)
+    func rateLimit(for account: String) async -> RateLimitInfo? {
+        await ledger.info(for: account)
     }
 
     // MARK: - Requests
 
-    private func token(for owner: String) throws -> String {
-        guard let token = tokenProvider(owner), !token.isEmpty else {
-            throw GitHubError.unauthorized("No token stored for \(owner). Add one in Settings.")
+    private func token(for account: String) throws -> String {
+        guard let token = tokenProvider(account), !token.isEmpty else {
+            throw GitHubError.unauthorized("No token stored for \(account). Add one in Settings.")
         }
         return token
     }

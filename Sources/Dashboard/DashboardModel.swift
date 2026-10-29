@@ -16,8 +16,15 @@ final class DashboardModel {
     /// How many rows the Actions and pull request columns show.
     static let feedLimit = 25
 
-    // Raw data, keyed so that every section is a pure derivation of it.
+    /// Raw data, keyed so that every section is a pure derivation of it.
+    /// Repositories are grouped by the login that owns them, which may be an
+    /// organization rather than an account.
     private(set) var reposByOwner: [String: [Repo]] = [:]
+    /// Organization login (lowercased) → the account whose token reads it.
+    private(set) var orgAccounts: [String: String] = [:]
+    /// Every organization seen so far, in its canonical casing, so Settings can
+    /// list one that currently has no visible repositories.
+    private(set) var discoveredOrgs: [String: String] = [:]
     private(set) var runsByRepo: [RepoID: [WorkflowRun]] = [:]
     private(set) var pullRequestsByOwner: [String: [PullRequestRow]] = [:]
     private(set) var issuesByOwner: [String: [IssueRow]] = [:]
@@ -57,8 +64,68 @@ final class DashboardModel {
 
     // MARK: - Derived state
 
+    /// The accounts holding tokens.
     var owners: [Owner] {
         settings.owners
+    }
+
+    /// Accounts plus the organizations that are switched on, for the owner menu.
+    var filterOwners: [Owner] {
+        var result = settings.owners
+        for login in discoveredOrgs.values.sorted(by: {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }) where settings.includesOrg(login) && !isAccount(login) {
+            result.append(Owner(login: login, kind: .organization))
+        }
+        return result
+    }
+
+    /// Organizations found under any account, for the Settings list.
+    var organizations: [OrganizationSummary] {
+        var logins = discoveredOrgs
+        for included in settings.includedOrgs {
+            let key = included.lowercased()
+            if logins[key] == nil {
+                logins[key] = included
+            }
+        }
+        return logins.values
+            .filter { !isAccount($0) }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .map { login in
+                OrganizationSummary(
+                    owner: Owner(login: login, kind: .organization),
+                    account: orgAccounts[login.lowercased()],
+                    repoCount: reposByOwner[login]?.count ?? 0,
+                    isIncluded: settings.includesOrg(login)
+                )
+            }
+    }
+
+    /// The account whose token should be used to read `owner`'s repositories.
+    /// Accounts resolve to themselves; organizations resolve to the account
+    /// that belongs to them. An organization that isn't switched on resolves to
+    /// nothing, so it is never polled.
+    func accountLogin(for owner: String) -> String? {
+        if let account = settings.owners.first(where: {
+            $0.login.caseInsensitiveCompare(owner) == .orderedSame
+        }) {
+            return account.login
+        }
+        guard settings.includesOrg(owner),
+              let account = orgAccounts[owner.lowercased()]
+        else { return nil }
+        return settings.owners.first {
+            $0.login.caseInsensitiveCompare(account) == .orderedSame
+        }?.login
+    }
+
+    func isOwnerIncluded(_ login: String) -> Bool {
+        accountLogin(for: login) != nil
+    }
+
+    private func isAccount(_ login: String) -> Bool {
+        settings.owners.contains { $0.login.caseInsensitiveCompare(login) == .orderedSame }
     }
 
     var ownerBanners: [OwnerBanner] {
@@ -70,14 +137,18 @@ final class DashboardModel {
     }
 
     var knownRepos: [Repo] {
-        reposByOwner.values.flatMap(\.self).sorted {
-            $0.id.slug.localizedStandardCompare($1.id.slug) == .orderedAscending
-        }
+        reposByOwner.values.flatMap(\.self)
+            .filter { isOwnerIncluded($0.owner) }
+            .sorted {
+                $0.id.slug.localizedStandardCompare($1.id.slug) == .orderedAscending
+            }
     }
 
     /// A repo the app is actively watching: still listed for its owner (so
-    /// archived and forked repos are out), not hidden, and passing the filters.
+    /// archived and forked repos are out), owned by an account or a switched-on
+    /// organization, not hidden, and passing the filters.
     func isRepoVisible(_ repo: RepoID) -> Bool {
+        guard isOwnerIncluded(repo.owner) else { return false }
         guard !settings.hiddenRepos.contains(repo.slug) else { return false }
         let listed = reposByOwner[repo.owner]?.contains { $0.id == repo } ?? false
         guard listed else { return false }
@@ -193,9 +264,24 @@ final class DashboardModel {
         for login in ownerHealth.keys where !liveLogins.contains(login) {
             ownerHealth[login] = nil
             rateLimits[login] = nil
+        }
+
+        // Forget accounts that were removed, and the organizations that were
+        // only reachable through them. A switched-off organization keeps its
+        // cached repositories so Settings can still show what it contains.
+        for key in orgAccounts.filter({ !liveLogins.contains($0.value.lowercased()) }).map(\.key) {
+            orgAccounts[key] = nil
+        }
+        for login in Array(reposByOwner.keys) {
+            let isLiveAccount = liveLogins.contains(login.lowercased())
+            let isReachableOrg = orgAccounts[login.lowercased()] != nil
+            guard !isLiveAccount, !isReachableOrg else { continue }
             reposByOwner[login] = nil
-            pullRequestsByOwner[login] = nil
-            issuesByOwner[login] = nil
+            pruneState(for: login, keeping: [])
+        }
+
+        if let ownerFilter, !isOwnerIncluded(ownerFilter) {
+            self.ownerFilter = nil
         }
 
         // A replaced token deserves a clean slate.
@@ -207,6 +293,8 @@ final class DashboardModel {
         var keys: Set<PollKey> = []
         for owner in liveOwners {
             keys.insert(.repos(owner.login))
+        }
+        for owner in filterOwners {
             keys.insert(.search(owner.login))
         }
         for repo in liveRepos {
@@ -241,11 +329,12 @@ final class DashboardModel {
 
         let now = clock.now
 
-        // Repositories, per owner.
-        for owner in ownerList {
-            let key = PollKey.repos(owner.login)
-            if force || reposByOwner[owner.login] == nil || planner.isDue(key, at: now) {
-                await loadRepos(owner: owner, now: now)
+        // Repositories, per account: one call returns the account's own repos
+        // and those of every organization it belongs to.
+        for account in ownerList {
+            let key = PollKey.repos(account.login)
+            if force || reposByOwner[account.login] == nil || planner.isDue(key, at: now) {
+                await loadRepos(account: account, now: now)
                 if Task.isCancelled { return }
             }
         }
@@ -260,10 +349,12 @@ final class DashboardModel {
         apply(results, now: now)
         if Task.isCancelled { return }
 
-        // Pull requests and issues, per owner.
-        for owner in ownerList {
+        // Pull requests and issues, per owner: every account, plus the
+        // organizations that are switched on.
+        for owner in filterOwners {
+            guard let account = accountLogin(for: owner.login) else { continue }
             if force || pullRequestsByOwner[owner.login] == nil || planner.isDue(.search(owner.login), at: now) {
-                await loadSearch(owner: owner, now: now)
+                await loadSearch(owner: owner, account: account, now: now)
                 if Task.isCancelled { return }
             }
         }
@@ -271,41 +362,96 @@ final class DashboardModel {
         // CI status of pull request heads.
         await refreshCI(force: force, now: clock.now)
 
-        // Only clear a token error when every call for that owner worked.
-        for owner in ownerList where !errorsThisPass.contains(owner.login) {
-            clearHealth(owner: owner.login)
+        // Only clear a token error when every call for that account worked.
+        for account in ownerList where !errorsThisPass.contains(account.login) {
+            clearHealth(owner: account.login)
         }
     }
 
-    private func loadRepos(owner: Owner, now: Date) async {
+    private func loadRepos(account: Owner, now: Date) async {
         do {
-            let repos = try await client.listRepos(owner: owner)
-            reposByOwner[owner.login] = repos
-            pruneState(for: owner.login, keeping: Set(repos.map(\.id)))
-            schedule(.repos(owner.login), base: cadence.repoListInterval, owner: owner.login, now: now)
+            let repos = try await client.listRepos(account: account.login)
+            merge(repos: repos, for: account)
+
+            // Best effort: knowing the organization even when the token can't
+            // see any of its repositories lets Settings explain why.
+            if let organizations = try? await client.organizations(account: account.login) {
+                for organization in organizations where !isAccount(organization.login) {
+                    let key = organization.login.lowercased()
+                    discoveredOrgs[key] = organization.login
+                    if orgAccounts[key] == nil {
+                        orgAccounts[key] = account.login
+                    }
+                }
+            }
+
+            schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
         } catch let error as GitHubError {
-            handle(error: error, owner: owner.login)
-            schedule(.repos(owner.login), base: cadence.repoListInterval, owner: owner.login, now: now)
+            handle(error: error, owner: account.login)
+            schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
         } catch {
-            handle(error: .transport(error.localizedDescription), owner: owner.login)
+            handle(error: .transport(error.localizedDescription), owner: account.login)
+        }
+    }
+
+    /// Splits one account's repo list by owner, so organization repositories
+    /// keep their own column of state while sharing the account's token.
+    private func merge(repos: [Repo], for account: Owner) {
+        let grouped = Dictionary(grouping: repos, by: { $0.id.owner })
+        var seen: Set<String> = [account.login.lowercased()]
+
+        reposByOwner[account.login] = grouped.first {
+            $0.key.caseInsensitiveCompare(account.login) == .orderedSame
+        }?.value ?? []
+
+        for (login, owned) in grouped where login.caseInsensitiveCompare(account.login) != .orderedSame {
+            let key = login.lowercased()
+            seen.insert(key)
+            discoveredOrgs[key] = login
+            orgAccounts[key] = account.login
+            reposByOwner[login] = owned
+            pruneState(for: login, keeping: Set(owned.map(\.id)))
+        }
+        pruneState(for: account.login, keeping: Set(reposByOwner[account.login]?.map(\.id) ?? []))
+
+        // Forget organizations this account no longer sees, e.g. because the
+        // token's repository access changed.
+        let vanished = orgAccounts
+            .filter { $0.value.caseInsensitiveCompare(account.login) == .orderedSame }
+            .map(\.key)
+            .filter { !seen.contains($0) }
+        for key in vanished {
+            orgAccounts[key] = nil
+            if let login = discoveredOrgs[key] {
+                reposByOwner[login] = nil
+                pruneState(for: login, keeping: [])
+            }
         }
     }
 
     private func fetchRepoData(_ repos: [Repo]) async -> [RepoFetchResult] {
-        guard !repos.isEmpty else { return [] }
+        // Resolve the token's account before leaving the main actor.
+        let jobs = repos.compactMap { repo -> (Repo, String)? in
+            accountLogin(for: repo.owner).map { (repo, $0) }
+        }
+        guard !jobs.isEmpty else { return [] }
         let client = client
         let limit = 4
         var results: [RepoFetchResult] = []
         await withTaskGroup(of: RepoFetchResult.self) { group in
-            var iterator = repos.makeIterator()
+            var iterator = jobs.makeIterator()
             for _ in 0 ..< limit {
-                guard let repo = iterator.next() else { break }
-                group.addTask { await RepoFetchResult.fetch(repo: repo, client: client) }
+                guard let (repo, account) = iterator.next() else { break }
+                group.addTask {
+                    await RepoFetchResult.fetch(repo: repo, account: account, client: client)
+                }
             }
             while let result = await group.next() {
                 results.append(result)
-                guard let repo = iterator.next() else { continue }
-                group.addTask { await RepoFetchResult.fetch(repo: repo, client: client) }
+                guard let (repo, account) = iterator.next() else { continue }
+                group.addTask {
+                    await RepoFetchResult.fetch(repo: repo, account: account, client: client)
+                }
             }
         }
         return results
@@ -314,6 +460,9 @@ final class DashboardModel {
     private func apply(_ results: [RepoFetchResult], now: Date) {
         for result in results {
             let repo = result.repo
+            // An organization's repos are polled with its account's token, so
+            // health and rate limiting belong to the account.
+            let account = accountLogin(for: repo.owner) ?? repo.owner
             var hasRunningRun = runsByRepo[repo.id]?.contains(where: \.isActive) ?? false
 
             switch result.runs {
@@ -322,7 +471,7 @@ final class DashboardModel {
                 hasRunningRun = runs.contains(where: \.isActive)
                 repoErrors[repo.id] = nil
             case let .failure(error):
-                handle(error: error, owner: repo.owner)
+                handle(error: error, owner: account)
                 if error != .cancelled {
                     repoErrors[repo.id] = error.shortMessage
                 }
@@ -333,19 +482,19 @@ final class DashboardModel {
                 lastPush: repo.pushedAt,
                 now: now
             )
-            schedule(.runs(repo.id), base: interval, owner: repo.owner, now: now)
+            schedule(.runs(repo.id), base: interval, owner: account, now: now)
         }
     }
 
-    private func loadSearch(owner: Owner, now: Date) async {
+    private func loadSearch(owner: Owner, account: String, now: Date) async {
         async let issuesResult = capture {
-            try await client.openIssues(owner: owner)
+            try await client.openIssues(owner: owner, account: account)
         }
 
         // Pull requests come from each repository, because only that endpoint
         // carries the head SHA the CI status needs.
         let repos = reposByOwner[owner.login] ?? []
-        let pullRequestResults = await fetchPullRequests(repos, owner: owner.login)
+        let pullRequestResults = await fetchPullRequests(repos, owner: owner.login, account: account)
 
         var pullRequests: [PullRequestRow] = []
         var failures: [RepoID: GitHubError] = [:]
@@ -365,23 +514,24 @@ final class DashboardModel {
             pullRequests.append(contentsOf: previous.filter { failures.keys.contains($0.repo) })
             for (repo, error) in failures {
                 repoErrors[repo] = error.shortMessage
-                handle(error: error, owner: owner.login)
+                handle(error: error, owner: account)
             }
         }
         pullRequestsByOwner[owner.login] = pullRequests
 
         if case let .failure(error) = await issuesResult {
-            handle(error: error, owner: owner.login)
+            handle(error: error, owner: account)
         } else if case let .success(rows) = await issuesResult {
             issuesByOwner[owner.login] = rows
         }
 
-        schedule(.search(owner.login), base: cadence.searchInterval, owner: owner.login, now: now)
+        schedule(.search(owner.login), base: cadence.searchInterval, owner: account, now: now)
     }
 
     private func fetchPullRequests(
         _ repos: [Repo],
-        owner: String
+        owner _: String,
+        account: String
     ) async -> [(RepoID, Result<[PullRequestRow], GitHubError>)] {
         guard !repos.isEmpty else { return [] }
         let client = client
@@ -393,7 +543,7 @@ final class DashboardModel {
                 guard let repo = iterator.next() else { break }
                 group.addTask {
                     let result = await capture {
-                        try await client.openPullRequests(repo: repo.id, owner: owner)
+                        try await client.openPullRequests(repo: repo.id, account: account)
                     }
                     return (repo.id, result)
                 }
@@ -403,7 +553,7 @@ final class DashboardModel {
                 guard let repo = iterator.next() else { continue }
                 group.addTask {
                     let result = await capture {
-                        try await client.openPullRequests(repo: repo.id, owner: owner)
+                        try await client.openPullRequests(repo: repo.id, account: account)
                     }
                     return (repo.id, result)
                 }
@@ -416,23 +566,27 @@ final class DashboardModel {
         var shasByRepo: [RepoID: Set<String>] = [:]
         for pullRequest in pullRequestsByOwner.values.joined() {
             // Filters are presentational; CI should keep updating for hidden-by-filter repos.
-            guard !settings.hiddenRepos.contains(pullRequest.repo.slug), !pullRequest.headSHA.isEmpty else { continue }
+            guard isOwnerIncluded(pullRequest.repo.owner),
+                  !settings.hiddenRepos.contains(pullRequest.repo.slug),
+                  !pullRequest.headSHA.isEmpty
+            else { continue }
             shasByRepo[pullRequest.repo, default: []].insert(pullRequest.headSHA)
         }
 
         for (repo, shas) in shasByRepo {
+            guard let account = accountLogin(for: repo.owner) else { continue }
             for sha in shas {
                 let key = PollKey.ci(repo, sha)
                 if !force, !planner.isDue(key, at: now) { continue }
                 do {
-                    let rollup = try await client.ciRollup(repo: repo, owner: repo.owner, headSHA: sha)
+                    let rollup = try await client.ciRollup(repo: repo, account: account, headSHA: sha)
                     var statuses = ciByRepo[repo] ?? [:]
                     statuses[sha] = rollup
                     ciByRepo[repo] = statuses
                     // Keep watching while checks are running; otherwise check
                     // back in an hour in case the commit is run again.
                     let base: TimeInterval = rollup == .pending ? cadence.searchInterval : 3600
-                    schedule(.ci(repo, sha), base: base, owner: repo.owner, now: now)
+                    schedule(.ci(repo, sha), base: base, owner: account, now: now)
                 } catch let error as GitHubError {
                     if error == .cancelled { continue }
                     var statuses = ciByRepo[repo] ?? [:]
@@ -450,9 +604,12 @@ final class DashboardModel {
     /// Forgets runs, pull requests, issues, CI status and errors for repos that
     /// are no longer listed, e.g. because they were archived.
     private func pruneState(for owner: String, keeping ids: Set<RepoID>) {
-        runsByRepo = runsByRepo.filter { ids.contains($0.key) }
-        ciByRepo = ciByRepo.filter { ids.contains($0.key) }
-        repoErrors = repoErrors.filter { ids.contains($0.key) }
+        func belongsToOwner(_ repo: RepoID) -> Bool {
+            repo.owner.caseInsensitiveCompare(owner) == .orderedSame
+        }
+        runsByRepo = runsByRepo.filter { !belongsToOwner($0.key) || ids.contains($0.key) }
+        ciByRepo = ciByRepo.filter { !belongsToOwner($0.key) || ids.contains($0.key) }
+        repoErrors = repoErrors.filter { !belongsToOwner($0.key) || ids.contains($0.key) }
         pullRequestsByOwner[owner] = (pullRequestsByOwner[owner] ?? []).filter { ids.contains($0.repo) }
         issuesByOwner[owner] = (issuesByOwner[owner] ?? []).filter { ids.contains($0.repo) }
         prunePlanner()
@@ -460,10 +617,10 @@ final class DashboardModel {
 
     /// Stops polling repos the app no longer watches.
     private func prunePlanner() {
-        let liveOwners = Set(settings.owners.map(\.login))
-        let liveRepos = Set(reposByOwner.values.flatMap { $0.map(\.id) })
+        let liveOwners = Set(filterOwners.map { $0.login.lowercased() })
+        let liveRepos = Set(pollableRepos().map(\.id))
         let keys = planner.keys.filter { key in
-            guard liveOwners.contains(key.owner) else { return false }
+            guard liveOwners.contains(key.owner.lowercased()) else { return false }
             guard let repo = key.repo else { return true }
             return liveRepos.contains(repo)
         }
@@ -471,9 +628,14 @@ final class DashboardModel {
     }
 
     private func pollableRepos() -> [Repo] {
-        reposByOwner.values
+        var seen: Set<RepoID> = []
+        return reposByOwner.values
             .flatMap(\.self)
-            .filter { !settings.hiddenRepos.contains($0.id.slug) }
+            .filter { repo in
+                isOwnerIncluded(repo.owner)
+                    && !settings.hiddenRepos.contains(repo.id.slug)
+                    && seen.insert(repo.id).inserted
+            }
     }
 
     private func schedule(_ key: PollKey, base: TimeInterval, owner: String, now: Date) {
@@ -506,5 +668,27 @@ final class DashboardModel {
         health.tokenError = nil
         health.message = nil
         ownerHealth[owner] = health
+    }
+}
+
+/// One organization in the Settings list: the account that reads it and how
+/// much of it the token can actually see.
+struct OrganizationSummary: Identifiable, Hashable {
+    let owner: Owner
+    let account: String?
+    let repoCount: Int
+    let isIncluded: Bool
+
+    var id: String {
+        owner.login
+    }
+
+    var detail: String {
+        let via = account.map { "via \($0)" }
+        guard repoCount > 0 else {
+            return "No repositories visible. Check the token's organization access in GitHub."
+        }
+        let repositories = repoCount == 1 ? "1 repository" : "\(repoCount) repositories"
+        return [via, repositories].compactMap(\.self).joined(separator: " · ")
     }
 }
