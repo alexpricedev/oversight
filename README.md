@@ -73,10 +73,11 @@ UserDefaults or to disk.
 ### Organizations
 
 An organization you belong to doesn't need a token of its own. After a refresh,
-**Settings → Organizations** lists every organization your token can see, with
-a switch for each. Switch one on and its repositories join the three columns,
-read with your account's token. Organizations are off until you turn them on,
-so a large org you belong to stays out of the way until you want it.
+**Settings → Organizations** lists the organizations your token can see, with a
+switch for each; you can also add one by name. Switch one on and its repositories
+join the three columns, read with your account's token. Organizations are off
+until you turn them on, so a large org you belong to stays out of the way until
+you want it.
 
 The token itself still has to cover those repositories: select the
 organization's repositories under **Repository access** when you create it, and

@@ -171,6 +171,7 @@ extension PullPayload {
             author: user?.login ?? "someone",
             createdAt: createdAt,
             isDraft: draft ?? false,
+            labels: labels.map(\.name),
             headSHA: head?.sha ?? "",
             url: htmlURL
         )

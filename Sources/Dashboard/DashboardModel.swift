@@ -372,19 +372,6 @@ final class DashboardModel {
         do {
             let repos = try await client.listRepos(account: account.login)
             merge(repos: repos, for: account)
-
-            // Best effort: knowing the organization even when the token can't
-            // see any of its repositories lets Settings explain why.
-            if let organizations = try? await client.organizations(account: account.login) {
-                for organization in organizations where !isAccount(organization.login) {
-                    let key = organization.login.lowercased()
-                    discoveredOrgs[key] = organization.login
-                    if orgAccounts[key] == nil {
-                        orgAccounts[key] = account.login
-                    }
-                }
-            }
-
             schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
         } catch let error as GitHubError {
             handle(error: error, owner: account.login)

@@ -58,28 +58,6 @@ actor GitHubAPIClient: GitHubClientProtocol {
             .sorted { $0.id.slug.localizedStandardCompare($1.id.slug) == .orderedAscending }
     }
 
-    func organizations(account: String) async throws -> [Owner] {
-        let token = try token(for: account)
-        var organizations: [Owner] = []
-        var page = 1
-        while page <= 10 {
-            let url = try makeURL(
-                path: "/user/orgs",
-                query: [
-                    URLQueryItem(name: "per_page", value: String(pageSize)),
-                    URLQueryItem(name: "page", value: String(page)),
-                ]
-            )
-            let payloads: [UserPayload] = try await fetchValue(url: url, token: token, tokenOwner: account)
-            organizations.append(contentsOf: payloads
-                .filter { $0.type.caseInsensitiveCompare("Organization") == .orderedSame }
-                .map { Owner(login: $0.login, kind: .organization) })
-            if payloads.count < pageSize { break }
-            page += 1
-        }
-        return organizations
-    }
-
     func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun] {
         let token = try token(for: account)
         let url = try makeURL(

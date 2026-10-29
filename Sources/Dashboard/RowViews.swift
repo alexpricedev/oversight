@@ -162,6 +162,9 @@ struct PullRequestRowView: View {
                         Text("@\(row.author)")
                         Text("·")
                         Text(RelativeTime.ago(row.createdAt, now: now))
+                        ForEach(Array(row.labels.prefix(2)), id: \.self) { label in
+                            Badge(text: label, tint: .accentColor)
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -171,7 +174,7 @@ struct PullRequestRowView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Pull request \(row.title) in \(row.repo.name), by \(row.author), CI \(ci.label)."
+            "Pull request \(row.title) in \(row.repo.name), by \(row.author), CI \(ci.label), labels \(row.labels.joined(separator: ", "))."
         )
     }
 }

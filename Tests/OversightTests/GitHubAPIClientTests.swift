@@ -48,21 +48,6 @@ struct GitHubAPIClientTests {
         #expect(affiliation == "owner,organization_member")
     }
 
-    @Test("Organizations come from /user/orgs and only organization accounts are kept")
-    func listsOrganizations() async throws {
-        let transport = StubTransport { request in
-            if request.url?.path == "/user/orgs" {
-                return .json(Data(#"[{"login":"wearenaitiv","type":"Organization"},{"login":"alexpricedev","type":"User"}]"#.utf8))
-            }
-            return .error("Not Found", status: 404)
-        }
-        let client = makeClient(transport)
-
-        let organizations = try await client.organizations(account: owner.login)
-
-        #expect(organizations == [Owner(login: "wearenaitiv", kind: .organization)])
-    }
-
     @Test("A missing token fails before any request is made")
     func missingToken() async {
         let transport = StubTransport { _ in .init() }
@@ -123,6 +108,7 @@ struct GitHubAPIClientTests {
         #expect(draft.headSHA == "ab1772c2222222222222222222222222222222222")
         #expect(rows.first { $0.number == 91 }?.author == "tycho-bot[bot]")
         #expect(rows.first { $0.number == 91 }?.isDraft == false)
+        #expect(rows.first { $0.number == 91 }?.labels == ["fettle"])
 
         let requests = await transport.recordedRequests()
         let request = try #require(requests.first)

@@ -312,9 +312,6 @@ struct DashboardModelTests {
             ],
             issuesByOwner: [
                 "wearenaitiv": [Sample.issue(repo: answerRank.id, number: 8)],
-            ],
-            orgsByAccount: [
-                "alexpricedev": [Owner(login: "wearenaitiv", kind: .organization)],
             ]
         )
     }

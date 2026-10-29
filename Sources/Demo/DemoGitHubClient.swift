@@ -9,10 +9,6 @@ actor DemoGitHubClient: GitHubClientProtocol {
         data.repos.filter { $0.owner.caseInsensitiveCompare(account) == .orderedSame }
     }
 
-    func organizations(account _: String) async throws -> [Owner] {
-        []
-    }
-
     func recentRuns(repo: RepoID, account _: String) async throws -> [WorkflowRun] {
         data.runs[repo] ?? []
     }

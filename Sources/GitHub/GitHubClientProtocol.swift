@@ -12,10 +12,6 @@ protocol GitHubClientProtocol: Sendable {
     /// forks are excluded.
     func listRepos(account: String) async throws -> [Repo]
 
-    /// Organizations the account's token can see. Best effort: a token without
-    /// organization access simply returns none.
-    func organizations(account: String) async throws -> [Owner]
-
     /// The most recent workflow runs in a repository.
     func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun]
 

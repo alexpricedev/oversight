@@ -13,7 +13,6 @@ actor FakeGitHubClient: GitHubClientProtocol {
     var repoErrors: [RepoID: GitHubError]
     var verifyKind: OwnerKind
     var rateLimitInfo: RateLimitInfo?
-    var orgsByAccount: [String: [Owner]]
 
     private(set) var listRepoCalls = 0
     private(set) var runsRequests: [RepoID] = []
@@ -35,8 +34,7 @@ actor FakeGitHubClient: GitHubClientProtocol {
         ownerErrors: [String: GitHubError] = [:],
         repoErrors: [RepoID: GitHubError] = [:],
         verifyKind: OwnerKind = .user,
-        rateLimitInfo: RateLimitInfo? = nil,
-        orgsByAccount: [String: [Owner]] = [:]
+        rateLimitInfo: RateLimitInfo? = nil
     ) {
         self.reposByOwner = reposByOwner
         self.runsByRepo = runsByRepo
@@ -47,7 +45,6 @@ actor FakeGitHubClient: GitHubClientProtocol {
         self.repoErrors = repoErrors
         self.verifyKind = verifyKind
         self.rateLimitInfo = rateLimitInfo
-        self.orgsByAccount = orgsByAccount
     }
 
     func setRepoError(_ error: GitHubError?, for repo: RepoID) {
@@ -62,10 +59,6 @@ actor FakeGitHubClient: GitHubClientProtocol {
         reposByOwner[owner] = repos
     }
 
-    func setOrgs(_ orgs: [Owner], for account: String) {
-        orgsByAccount[account] = orgs
-    }
-
     func clearRecordings() {
         runsRequests = []
         issueCalls = []
@@ -77,12 +70,6 @@ actor FakeGitHubClient: GitHubClientProtocol {
         accountsUsed.insert(account)
         if let error = ownerErrors[account] { throw error }
         return reposByOwner[account] ?? []
-    }
-
-    func organizations(account: String) async throws -> [Owner] {
-        accountsUsed.insert(account)
-        if let error = ownerErrors[account] { throw error }
-        return orgsByAccount[account] ?? []
     }
 
     func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun] {
