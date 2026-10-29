@@ -1,0 +1,113 @@
+{
+  "total_count": 6,
+  "workflow_runs": [
+    {
+      "id": 501,
+      "name": "Deploy",
+      "display_title": "Ship the cross-repo view",
+      "head_branch": "main",
+      "head_sha": "aaaaaaa1111111111111111111111111111111111",
+      "status": "in_progress",
+      "conclusion": null,
+      "event": "push",
+      "created_at": "2026-10-29T10:00:00Z",
+      "run_started_at": "2026-10-29T10:00:06Z",
+      "updated_at": "2026-10-29T10:03:06Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/501",
+      "head_commit": {
+        "id": "aaaaaaa1111111111111111111111111111111111",
+        "message": "Ship the cross-repo view\n\nLonger explanation that should not appear."
+      }
+    },
+    {
+      "id": 502,
+      "name": "Deploy",
+      "display_title": "Fix flaky deploy",
+      "head_branch": "main",
+      "head_sha": "bbbbbbb2222222222222222222222222222222222",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push",
+      "created_at": "2026-10-29T08:00:00Z",
+      "run_started_at": "2026-10-29T08:00:05Z",
+      "updated_at": "2026-10-29T08:02:05Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/502",
+      "head_commit": {
+        "id": "bbbbbbb2222222222222222222222222222222222",
+        "message": "Fix flaky deploy"
+      }
+    },
+    {
+      "id": 503,
+      "name": "Deploy",
+      "display_title": "Release 1.4.0",
+      "head_branch": "v1.4.0",
+      "head_sha": "ccccccc3333333333333333333333333333333333",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push",
+      "created_at": "2026-10-28T18:00:00Z",
+      "run_started_at": "2026-10-28T18:00:03Z",
+      "updated_at": "2026-10-28T18:03:33Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/503",
+      "head_commit": {
+        "id": "ccccccc3333333333333333333333333333333333",
+        "message": "Release 1.4.0"
+      }
+    },
+    {
+      "id": 504,
+      "name": "Deploy",
+      "display_title": "Try the new runner",
+      "head_branch": "main",
+      "head_sha": "ddddddd4444444444444444444444444444444444",
+      "status": "completed",
+      "conclusion": "failure",
+      "event": "push",
+      "created_at": "2026-10-27T12:00:00Z",
+      "run_started_at": "2026-10-27T12:00:02Z",
+      "updated_at": "2026-10-27T12:01:02Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/504",
+      "head_commit": {
+        "id": "ddddddd4444444444444444444444444444444444",
+        "message": "Try the new runner"
+      }
+    },
+    {
+      "id": 505,
+      "name": "Deploy",
+      "display_title": "Cancelled attempt",
+      "head_branch": "main",
+      "head_sha": "eeeeeee5555555555555555555555555555555555",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "event": "push",
+      "created_at": "2026-10-26T12:00:00Z",
+      "run_started_at": "2026-10-26T12:00:02Z",
+      "updated_at": "2026-10-26T12:00:32Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/505",
+      "head_commit": {
+        "id": "eeeeeee5555555555555555555555555555555555",
+        "message": "Cancelled attempt"
+      }
+    },
+    {
+      "id": 506,
+      "name": "Deploy",
+      "display_title": "Skipped run",
+      "head_branch": "main",
+      "head_sha": "fffffff6666666666666666666666666666666666",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "push",
+      "created_at": "2026-10-25T12:00:00Z",
+      "run_started_at": "2026-10-25T12:00:02Z",
+      "updated_at": "2026-10-25T12:00:02Z",
+      "html_url": "https://github.com/alexpricedev/atlas/actions/runs/506",
+      "head_commit": {
+        "id": "fffffff6666666666666666666666666666666666",
+        "message": "Skipped run"
+      }
+    }
+  ]
+}

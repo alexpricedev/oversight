@@ -1,0 +1,40 @@
+{
+  "total_count": 3,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 33,
+      "title": "Deploy workflow fails on tag builds",
+      "html_url": "https://github.com/alexpricedev/atlas/issues/33",
+      "repository_url": "https://api.github.com/repos/alexpricedev/atlas",
+      "user": { "login": "alexpricedev" },
+      "created_at": "2026-10-25T09:00:00Z",
+      "updated_at": "2026-10-26T09:00:00Z",
+      "labels": [{ "name": "bug" }, { "name": "ci" }],
+      "pull_request": null
+    },
+    {
+      "number": 34,
+      "title": "Add dark mode",
+      "html_url": "https://github.com/alexpricedev/altex/issues/34",
+      "repository_url": "https://api.github.com/repos/alexpricedev/altex",
+      "user": { "login": "kamal" },
+      "created_at": "2026-10-24T09:00:00Z",
+      "updated_at": "2026-10-24T09:00:00Z",
+      "labels": []
+    },
+    {
+      "number": 35,
+      "title": "A pull request that search also returns for issues",
+      "html_url": "https://github.com/alexpricedev/altex/pull/35",
+      "repository_url": "https://api.github.com/repos/alexpricedev/altex",
+      "user": { "login": "kamal" },
+      "created_at": "2026-10-23T09:00:00Z",
+      "updated_at": "2026-10-23T09:00:00Z",
+      "labels": [],
+      "pull_request": {
+        "head": { "sha": "7777777777777777777777777777777777777777" }
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+name: Oversight
+options:
+  bundleIdPrefix: com.chptrs
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: K4XTCQFY32
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_EMIT_LOC_STRINGS: YES
+targets:
+  Oversight:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chptrs.oversight
+        PRODUCT_NAME: Oversight
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: Oversight
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        COMBINE_HIDPI_IMAGES: YES
+  OversightTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/OversightTests
+    dependencies:
+      - target: Oversight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chptrs.oversight.tests
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Oversight.app/Contents/MacOS/Oversight
+schemes:
+  Oversight:
+    build:
+      targets:
+        Oversight: all
+        OversightTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OversightTests

@@ -1,0 +1,34 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "number": 12,
+      "title": "Add the cross-repo view",
+      "html_url": "https://github.com/alexpricedev/atlas/pull/12",
+      "repository_url": "https://api.github.com/repos/alexpricedev/atlas",
+      "user": { "login": "alexpricedev" },
+      "created_at": "2026-10-20T09:00:00Z",
+      "updated_at": "2026-10-29T09:00:00Z",
+      "draft": false,
+      "labels": [{ "name": "feature" }],
+      "pull_request": {
+        "head": { "sha": "9999999999999999999999999999999999999999" }
+      }
+    },
+    {
+      "number": 7,
+      "title": "WIP: Preview deploy",
+      "html_url": "https://github.com/alexpricedev/altex/pull/7",
+      "repository_url": "https://api.github.com/repos/alexpricedev/altex",
+      "user": { "login": "kamal" },
+      "created_at": "2026-10-27T09:00:00Z",
+      "updated_at": "2026-10-28T09:00:00Z",
+      "draft": true,
+      "labels": [],
+      "pull_request": {
+        "head": { "sha": "8888888888888888888888888888888888888888" }
+      }
+    }
+  ]
+}
