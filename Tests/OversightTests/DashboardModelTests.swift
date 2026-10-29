@@ -292,4 +292,102 @@ struct DashboardModelTests {
         #expect(model.latestPullRequests.first?.number == 30)
         #expect(model.latestPullRequests.last?.number == 6)
     }
+
+    // MARK: - Organizations
+
+    private func organizationClient() -> FakeGitHubClient {
+        let answerRank = Repo(
+            id: RepoID(owner: "wearenaitiv", name: "answerrank"),
+            isPrivate: true,
+            pushedAt: Sample.date("2026-10-29T08:00:00Z")
+        )
+        return FakeGitHubClient(
+            reposByOwner: ["alexpricedev": [Sample.atlas, answerRank]],
+            runsByRepo: [
+                Sample.atlas.id: [Sample.run(id: 1)],
+                answerRank.id: [Sample.run(id: 2)],
+            ],
+            pullRequestsByOwner: [
+                "wearenaitiv": [Sample.pullRequest(repo: answerRank.id, number: 7)],
+            ],
+            issuesByOwner: [
+                "wearenaitiv": [Sample.issue(repo: answerRank.id, number: 8)],
+            ]
+        )
+    }
+
+    @Test("Organization repositories stay out until the organization is switched on")
+    func organizationReposAreOptIn() async {
+        let client = organizationClient()
+        let settings = makeSettings()
+        let model = makeModel(client: client, settings: settings)
+
+        await model.refreshAll()
+
+        #expect(model.actionRows.map(\.repo.slug) == ["alexpricedev/atlas"])
+        #expect(model.pullRequestRows.isEmpty)
+        #expect(model.issueRows.isEmpty)
+        #expect(model.accountLogin(for: "wearenaitiv") == nil)
+
+        // The organization is still offered in Settings, with what it contains.
+        #expect(model.organizations.map(\.owner.login) == ["wearenaitiv"])
+        #expect(model.organizations.first?.repoCount == 1)
+        #expect(model.organizations.first?.isIncluded == false)
+        #expect(model.organizations.first?.account == "alexpricedev")
+
+        let runsBefore = await client.runsRequests
+        #expect(!runsBefore.contains(RepoID(owner: "wearenaitiv", name: "answerrank")))
+
+        settings.includeOrg("wearenaitiv")
+        await model.settingsDidChange()
+
+        #expect(model.actionRows.map(\.repo.slug).sorted() == [
+            "alexpricedev/atlas",
+            "wearenaitiv/answerrank",
+        ])
+        #expect(model.pullRequestRows.map(\.repo.slug) == ["wearenaitiv/answerrank"])
+        #expect(model.issueRows.map(\.repo.slug) == ["wearenaitiv/answerrank"])
+        #expect(model.accountLogin(for: "wearenaitiv") == "alexpricedev")
+        #expect(model.organizations.first?.isIncluded == true)
+        #expect(model.ownerBanners.isEmpty)
+    }
+
+    @Test("Organization rows are read with the account's token and an org: search")
+    func organizationUsesTheAccountToken() async {
+        let client = organizationClient()
+        let settings = makeSettings()
+        settings.includeOrg("wearenaitiv")
+        let model = makeModel(client: client, settings: settings)
+
+        await model.refreshAll()
+
+        let calls = await client.issueCalls
+        let orgCall = calls.first { $0.owner == "wearenaitiv" }
+        #expect(orgCall?.kind == .organization)
+        #expect(orgCall?.account == "alexpricedev")
+
+        let accounts = await client.accountsUsed
+        #expect(accounts == ["alexpricedev"])
+    }
+
+    @Test("Switching an organization off stops polling its repositories")
+    func excludingOrganizationStopsPolling() async {
+        let client = organizationClient()
+        let settings = makeSettings()
+        settings.includeOrg("wearenaitiv")
+        let model = makeModel(client: client, settings: settings)
+
+        await model.refreshAll()
+        #expect(model.actionRows.count == 2)
+
+        await client.clearRecordings()
+        settings.excludeOrg("wearenaitiv")
+        await model.settingsDidChange()
+
+        let requests = await client.runsRequests
+        #expect(!requests.contains(RepoID(owner: "wearenaitiv", name: "answerrank")))
+        #expect(model.actionRows.map(\.repo.slug) == ["alexpricedev/atlas"])
+        #expect(model.pullRequestRows.isEmpty)
+        #expect(model.organizations.map(\.owner.login) == ["wearenaitiv"])
+    }
 }

@@ -5,23 +5,23 @@ import Foundation
 actor DemoGitHubClient: GitHubClientProtocol {
     private let data = DemoData()
 
-    func listRepos(owner: Owner) async throws -> [Repo] {
-        data.repos.filter { $0.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
+    func listRepos(account: Owner) async throws -> [Repo] {
+        data.repos.filter { $0.owner.caseInsensitiveCompare(account.login) == .orderedSame }
     }
 
-    func recentRuns(repo: RepoID, owner _: String) async throws -> [WorkflowRun] {
+    func recentRuns(repo: RepoID, account _: String) async throws -> [WorkflowRun] {
         data.runs[repo] ?? []
     }
 
-    func openPullRequests(repo: RepoID, owner: String) async throws -> [PullRequestRow] {
-        (data.pullRequests[owner] ?? []).filter { $0.repo == repo }
+    func openPullRequests(repo: RepoID, account: String) async throws -> [PullRequestRow] {
+        (data.pullRequests[account] ?? []).filter { $0.repo == repo }
     }
 
-    func openIssues(owner: Owner) async throws -> [IssueRow] {
+    func openIssues(owner: Owner, account _: String) async throws -> [IssueRow] {
         data.issues[owner.login] ?? []
     }
 
-    func ciRollup(repo: RepoID, owner _: String, headSHA: String) async throws -> CIRollup {
+    func ciRollup(repo: RepoID, account _: String, headSHA: String) async throws -> CIRollup {
         data.ci["\(repo.slug)@\(headSHA)"] ?? .none
     }
 

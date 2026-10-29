@@ -64,6 +64,7 @@ struct PullRequestRow: Identifiable, Hashable {
     let author: String
     let createdAt: Date
     let isDraft: Bool
+    let labels: [String]
     let headSHA: String
     let url: URL
 
@@ -74,6 +75,7 @@ struct PullRequestRow: Identifiable, Hashable {
         author: String,
         createdAt: Date,
         isDraft: Bool,
+        labels: [String] = [],
         headSHA: String,
         url: URL
     ) {
@@ -84,6 +86,7 @@ struct PullRequestRow: Identifiable, Hashable {
         self.author = author
         self.createdAt = createdAt
         self.isDraft = isDraft
+        self.labels = labels
         self.headSHA = headSHA
         self.url = url
     }

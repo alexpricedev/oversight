@@ -17,7 +17,7 @@ struct GitHubAPIClientTests {
         )
     }
 
-    @Test("The repo list paginates, then drops archived repos, forks and other owners")
+    @Test("The repo list paginates, keeps organization repos, and drops archived repos and forks")
     func listsPagedReposAndFilters() async throws {
         let transport = StubTransport { request in
             let page = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
@@ -32,11 +32,20 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 3)
 
-        let repos = try await client.listRepos(owner: owner)
+        let repos = try await client.listRepos(account: owner)
 
-        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas"])
+        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas", "someone-else/someone-atlas"])
         let requests = await transport.recordedRequests()
         #expect(requests.count == 2)
+        // Collaborator-only repositories belong to somebody else, so the
+        // request asks for the account's own repos and its organizations'.
+        let firstURL = requests.first.flatMap(\.url)
+        let components = firstURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let affiliation = components?
+            .queryItems?
+            .first { $0.name == "affiliation" }?
+            .value
+        #expect(affiliation == "owner,organization_member")
     }
 
     @Test("A missing token fails before any request is made")
@@ -45,7 +54,7 @@ struct GitHubAPIClientTests {
         let client = GitHubAPIClient(transport: transport, tokenProvider: { _ in nil })
 
         do {
-            _ = try await client.listRepos(owner: owner)
+            _ = try await client.listRepos(account: owner)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -68,7 +77,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
 
         do {
-            _ = try await client.listRepos(owner: owner)
+            _ = try await client.listRepos(account: owner)
             Issue.record("Expected an error")
         } catch let error as GitHubError {
             guard case let .unauthorized(message) = error else {
@@ -89,7 +98,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
         let repo = RepoID(owner: "alexpricedev", name: "atlas")
 
-        let rows = try await client.openPullRequests(repo: repo, owner: owner.login)
+        let rows = try await client.openPullRequests(repo: repo, account: owner.login)
 
         #expect(rows.count == 2)
         #expect(rows.map(\.number) == [91, 73])
@@ -99,6 +108,7 @@ struct GitHubAPIClientTests {
         #expect(draft.headSHA == "ab1772c2222222222222222222222222222222222")
         #expect(rows.first { $0.number == 91 }?.author == "tycho-bot[bot]")
         #expect(rows.first { $0.number == 91 }?.isDraft == false)
+        #expect(rows.first { $0.number == 91 }?.labels == ["fettle"])
 
         let requests = await transport.recordedRequests()
         let request = try #require(requests.first)
@@ -117,7 +127,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        let rows = try await client.openIssues(owner: owner)
+        let rows = try await client.openIssues(owner: owner, account: owner.login)
 
         #expect(rows.map(\.number).sorted() == [33, 34])
         #expect(rows.first { $0.number == 33 }?.labels == ["bug", "ci"])
@@ -138,7 +148,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 1)
 
-        let rows = try await client.openIssues(owner: owner)
+        let rows = try await client.openIssues(owner: owner, account: owner.login)
 
         #expect(rows.map(\.number).sorted() == [33, 34])
         let requests = await transport.recordedRequests()
@@ -152,7 +162,7 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        _ = try await client.openIssues(owner: Owner(login: "tycho-station", kind: .organization))
+        _ = try await client.openIssues(owner: Owner(login: "tycho-station", kind: .organization), account: "tycho-station")
 
         let requests = await transport.recordedRequests()
         let query = try URLComponents(url: #require(requests.first?.url), resolvingAgainstBaseURL: false)?
@@ -171,7 +181,7 @@ struct GitHubAPIClientTests {
 
         let rollup = try await client.ciRollup(
             repo: repo,
-            owner: owner.login,
+            account: owner.login,
             headSHA: "9999999999999999999999999999999999999999"
         )
 
@@ -198,8 +208,8 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        let first = try await client.recentRuns(repo: repo, owner: owner.login)
-        let second = try await client.recentRuns(repo: repo, owner: owner.login)
+        let first = try await client.recentRuns(repo: repo, account: owner.login)
+        let second = try await client.recentRuns(repo: repo, account: owner.login)
 
         #expect(first.count == 4)
         #expect(second.count == first.count)
@@ -237,11 +247,11 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport)
 
-        _ = try await client.listRepos(owner: owner)
+        _ = try await client.listRepos(account: owner)
         var info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
 
-        _ = try await client.openIssues(owner: owner)
+        _ = try await client.openIssues(owner: owner, account: owner.login)
         info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
         #expect(info?.limit == 5000)
@@ -253,7 +263,7 @@ struct GitHubAPIClientTests {
             switch request.url?.path {
             case "/user": try .json(Fixtures.data("user"))
             case "/users/tycho-station": try .json(Fixtures.data("org_user"))
-            case "/user/repos": try .json(Fixtures.data("repos_page_1"))
+            case "/orgs/tycho-station/repos": try .json(Fixtures.data("repos_page_1"))
             default: .error("Not Found", status: 404)
             }
         }
@@ -261,6 +271,42 @@ struct GitHubAPIClientTests {
 
         let verified = try await client.verifyOwner(login: "tycho-station", token: "a-token")
         #expect(verified == Owner(login: "tycho-station", kind: .organization))
+    }
+
+    @Test("An organization-owned token verifies even when /user refuses it")
+    func verifyOrganizationOwnedToken() async throws {
+        let transport = StubTransport { request in
+            switch request.url?.path {
+            case "/user": .error("Resource not accessible by personal access token", status: 403)
+            case "/users/tycho-station": try .json(Fixtures.data("org_user"))
+            case "/orgs/tycho-station/repos": try .json(Fixtures.data("repos_page_1"))
+            default: .error("Not Found", status: 404)
+            }
+        }
+        let client = makeClient(transport)
+
+        let verified = try await client.verifyOwner(login: "tycho-station", token: "a-token")
+
+        #expect(verified == Owner(login: "tycho-station", kind: .organization))
+    }
+
+    @Test("An organization account lists repositories through /orgs, not /user/repos")
+    func listsOrganizationRepos() async throws {
+        let transport = StubTransport { request in
+            if request.url?.path == "/orgs/tycho-station/repos" {
+                return try .json(Fixtures.data("repos_page_1"))
+            }
+            return .error("Not Found", status: 404)
+        }
+        let client = makeClient(transport)
+
+        let repos = try await client.listRepos(
+            account: Owner(login: "tycho-station", kind: .organization)
+        )
+
+        #expect(repos.map(\.id.slug) == ["alexpricedev/atlas"])
+        let requests = await transport.recordedRequests()
+        #expect(requests.allSatisfy { $0.url?.path == "/orgs/tycho-station/repos" })
     }
 
     @Test("Verifying an owner surfaces a rejected token")
@@ -302,6 +348,56 @@ struct GitHubAPIClientTests {
                 return
             }
             #expect(message.contains("does-not-exist"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("A 422 carries GitHub's explanation and the endpoint that failed")
+    func validationFailureIsExplained() async {
+        let body = Data(#"{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid","message":"The listed users and repositories cannot be searched."}]}"#.utf8)
+        let transport = StubTransport { _ in
+            .init(status: 422, headers: ["Content-Type": "application/json"], body: body)
+        }
+        let client = makeClient(transport)
+
+        do {
+            _ = try await client.listRepos(account: owner)
+            Issue.record("Expected an error")
+        } catch let error as GitHubError {
+            guard case let .server(status, message) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(status == 422)
+            #expect(message.contains("The listed users and repositories cannot be searched."))
+            #expect(message.contains("/user/repos"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("An unapproved organization's issue search explains the approval wait")
+    func organizationSearchNeedsApproval() async {
+        let body = Data(#"{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid"}]}"#.utf8)
+        let transport = StubTransport { _ in
+            .init(status: 422, headers: ["Content-Type": "application/json"], body: body)
+        }
+        let client = makeClient(transport)
+
+        do {
+            _ = try await client.openIssues(
+                owner: Owner(login: "wearenaitiv", kind: .organization),
+                account: "wearenaitiv"
+            )
+            Issue.record("Expected an error")
+        } catch let error as GitHubError {
+            guard case let .forbidden(message) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(message.contains("can't search wearenaitiv's issues"))
+            #expect(message.contains("approves it"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

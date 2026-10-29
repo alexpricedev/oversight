@@ -2,6 +2,8 @@ import Foundation
 @testable import Oversight
 
 actor FakeGitHubClient: GitHubClientProtocol {
+    /// Keyed by account: every repository that account's token can see,
+    /// including the ones owned by its organizations.
     var reposByOwner: [String: [Repo]]
     var runsByRepo: [RepoID: [WorkflowRun]]
     var pullRequestsByOwner: [String: [PullRequestRow]]
@@ -11,7 +13,17 @@ actor FakeGitHubClient: GitHubClientProtocol {
     var repoErrors: [RepoID: GitHubError]
     var verifyKind: OwnerKind
     var rateLimitInfo: RateLimitInfo?
+
     private(set) var listRepoCalls = 0
+    private(set) var runsRequests: [RepoID] = []
+    private(set) var issueCalls: [IssueCall] = []
+    private(set) var accountsUsed: Set<String> = []
+
+    struct IssueCall: Equatable {
+        let owner: String
+        let kind: OwnerKind
+        let account: String
+    }
 
     init(
         reposByOwner: [String: [Repo]] = [:],
@@ -47,31 +59,45 @@ actor FakeGitHubClient: GitHubClientProtocol {
         reposByOwner[owner] = repos
     }
 
-    func listRepos(owner: Owner) async throws -> [Repo] {
-        listRepoCalls += 1
-        if let error = ownerErrors[owner.login] { throw error }
-        return reposByOwner[owner.login] ?? []
+    func clearRecordings() {
+        runsRequests = []
+        issueCalls = []
+        accountsUsed = []
     }
 
-    func recentRuns(repo: RepoID, owner: String) async throws -> [WorkflowRun] {
+    func listRepos(account: Owner) async throws -> [Repo] {
+        listRepoCalls += 1
+        accountsUsed.insert(account.login)
+        if let error = ownerErrors[account.login] { throw error }
+        return reposByOwner[account.login] ?? []
+    }
+
+    func recentRuns(repo: RepoID, account: String) async throws -> [WorkflowRun] {
+        runsRequests.append(repo)
+        accountsUsed.insert(account)
         if let error = repoErrors[repo] { throw error }
-        if let error = ownerErrors[owner] { throw error }
+        if let error = ownerErrors[account] { throw error }
         return runsByRepo[repo] ?? []
     }
 
-    func openPullRequests(repo: RepoID, owner: String) async throws -> [PullRequestRow] {
+    func openPullRequests(repo: RepoID, account: String) async throws -> [PullRequestRow] {
+        accountsUsed.insert(account)
         if let error = repoErrors[repo] { throw error }
-        if let error = ownerErrors[owner] { throw error }
-        return (pullRequestsByOwner[owner] ?? []).filter { $0.repo == repo }
+        if let error = ownerErrors[account] { throw error }
+        return pullRequestsByOwner.values.joined().filter { $0.repo == repo }
     }
 
-    func openIssues(owner: Owner) async throws -> [IssueRow] {
+    func openIssues(owner: Owner, account: String) async throws -> [IssueRow] {
+        issueCalls.append(IssueCall(owner: owner.login, kind: owner.kind, account: account))
+        accountsUsed.insert(account)
         if let error = ownerErrors[owner.login] { throw error }
+        if let error = ownerErrors[account] { throw error }
         return issuesByOwner[owner.login] ?? []
     }
 
-    func ciRollup(repo: RepoID, owner: String, headSHA: String) async throws -> CIRollup {
-        if let error = ownerErrors[owner] { throw error }
+    func ciRollup(repo: RepoID, account: String, headSHA: String) async throws -> CIRollup {
+        accountsUsed.insert(account)
+        if let error = ownerErrors[account] { throw error }
         return ciByKey["\(repo.slug)@\(headSHA)"] ?? .none
     }
 

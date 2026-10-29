@@ -109,37 +109,38 @@ struct DemoData {
             let author: String
             let minutesAgo: Double
             let draft: Bool
+            let labels: [String]
             let ci: CIRollup
         }
 
         let pullSpecs: [PullSpec] = [
-            PullSpec(repo: medina, number: 91, title: "Redesign the docking clamp: one group, type switch, hover text", author: "tycho-bot[bot]", minutesAgo: 9, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 12, title: "Add the gate transit overview", author: "holden", minutesAgo: 21, draft: false, ci: .success),
-            PullSpec(repo: medina, number: 142, title: "Freight manifest audit for the Ring run", author: "naomi", minutesAgo: 34, draft: true, ci: .pending),
-            PullSpec(repo: donnager, number: 73, title: "Bump the protomolecule bindings group with 3 updates", author: "mcrn-bot[bot]", minutesAgo: 55, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 11, title: "Keep polling paused while the station is dark", author: "amos", minutesAgo: 88, draft: false, ci: .pending),
-            PullSpec(repo: tycho, number: 48, title: "Fix the footer overlap on short viewports", author: "drummer", minutesAgo: 120, draft: false, ci: .failure),
-            PullSpec(repo: nauvoo, number: 26, title: "Validate freight manifests before departure", author: "prax", minutesAgo: 150, draft: false, ci: .success),
-            PullSpec(repo: gate, number: 9, title: "Show incident history on the Medina status page", author: "elvi", minutesAgo: 210, draft: false, ci: .none),
-            PullSpec(repo: medina, number: 140, title: "Add the recruitment landing page", author: "fred-j", minutesAgo: 260, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 10, title: "Cache station lists for ten minutes", author: "naomi", minutesAgo: 340, draft: false, ci: .success),
-            PullSpec(repo: donnager, number: 70, title: "Media, export and handoff polish", author: "bobbie", minutesAgo: 420, draft: false, ci: .success),
-            PullSpec(repo: tycho, number: 47, title: "Refresh the drive review diagrams", author: "ashford", minutesAgo: 500, draft: false, ci: .success),
-            PullSpec(repo: nauvoo, number: 24, title: "Bump reactor-core from 2.17 to 2.18", author: "mcrn-bot[bot]", minutesAgo: 610, draft: false, ci: .success),
-            PullSpec(repo: gate, number: 8, title: "Tighten the probe intervals", author: "holden", minutesAgo: 730, draft: false, ci: .success),
-            PullSpec(repo: medina, number: 138, title: "Copy pass: what the Belt builds and why", author: "avasarala", minutesAgo: 850, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 9, title: "Add a rate-limit footer to the ops console", author: "alex-k", minutesAgo: 980, draft: false, ci: .success),
-            PullSpec(repo: donnager, number: 66, title: "Split the editor toolbar out of the footer", author: "bobbie", minutesAgo: 1200, draft: false, ci: .failure),
-            PullSpec(repo: tycho, number: 45, title: "Move the migration notes into the handbook", author: "drummer", minutesAgo: 1500, draft: false, ci: .success),
-            PullSpec(repo: nauvoo, number: 21, title: "Expose the Ganymede warehouse views to the dashboard", author: "prax", minutesAgo: 1800, draft: true, ci: .none),
-            PullSpec(repo: gate, number: 7, title: "Add the maintenance window banner", author: "elvi", minutesAgo: 2200, draft: false, ci: .success),
-            PullSpec(repo: medina, number: 131, title: "Use the new Tycho brand font everywhere", author: "fred-j", minutesAgo: 2700, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 8, title: "Show burn status from the head commit", author: "holden", minutesAgo: 3100, draft: false, ci: .success),
-            PullSpec(repo: donnager, number: 61, title: "Bump the docking dependencies group across 2 directories", author: "mcrn-bot[bot]", minutesAgo: 3600, draft: false, ci: .success),
-            PullSpec(repo: tycho, number: 41, title: "Drop the unused drive fonts", author: "amos", minutesAgo: 4100, draft: false, ci: .success),
-            PullSpec(repo: nauvoo, number: 18, title: "Add the quote builder handoff", author: "naomi", minutesAgo: 4800, draft: false, ci: .success),
-            PullSpec(repo: gate, number: 6, title: "Trim the status page payload", author: "elvi", minutesAgo: 5500, draft: false, ci: .success),
-            PullSpec(repo: rocinante, number: 7, title: "Prefetch the next page of transit windows", author: "alex-k", minutesAgo: 6300, draft: false, ci: .success),
+            PullSpec(repo: medina, number: 91, title: "Redesign the docking clamp: one group, type switch, hover text", author: "tycho-bot[bot]", minutesAgo: 9, draft: false, labels: ["fettle", "docking"], ci: .success),
+            PullSpec(repo: rocinante, number: 12, title: "Add the gate transit overview", author: "holden", minutesAgo: 21, draft: false, labels: ["gate"], ci: .success),
+            PullSpec(repo: medina, number: 142, title: "Freight manifest audit for the Ring run", author: "naomi", minutesAgo: 34, draft: true, labels: ["freight", "audit"], ci: .pending),
+            PullSpec(repo: donnager, number: 73, title: "Bump the protomolecule bindings group with 3 updates", author: "mcrn-bot[bot]", minutesAgo: 55, draft: false, labels: [], ci: .success),
+            PullSpec(repo: rocinante, number: 11, title: "Keep polling paused while the station is dark", author: "amos", minutesAgo: 88, draft: false, labels: ["ops"], ci: .pending),
+            PullSpec(repo: tycho, number: 48, title: "Fix the footer overlap on short viewports", author: "drummer", minutesAgo: 120, draft: false, labels: ["bug", "design"], ci: .failure),
+            PullSpec(repo: nauvoo, number: 26, title: "Validate freight manifests before departure", author: "prax", minutesAgo: 150, draft: false, labels: [], ci: .success),
+            PullSpec(repo: gate, number: 9, title: "Show incident history on the Medina status page", author: "elvi", minutesAgo: 210, draft: false, labels: [], ci: .none),
+            PullSpec(repo: medina, number: 140, title: "Add the recruitment landing page", author: "fred-j", minutesAgo: 260, draft: false, labels: [], ci: .success),
+            PullSpec(repo: rocinante, number: 10, title: "Cache station lists for ten minutes", author: "naomi", minutesAgo: 340, draft: false, labels: [], ci: .success),
+            PullSpec(repo: donnager, number: 70, title: "Media, export and handoff polish", author: "bobbie", minutesAgo: 420, draft: false, labels: [], ci: .success),
+            PullSpec(repo: tycho, number: 47, title: "Refresh the drive review diagrams", author: "ashford", minutesAgo: 500, draft: false, labels: [], ci: .success),
+            PullSpec(repo: nauvoo, number: 24, title: "Bump reactor-core from 2.17 to 2.18", author: "mcrn-bot[bot]", minutesAgo: 610, draft: false, labels: [], ci: .success),
+            PullSpec(repo: gate, number: 8, title: "Tighten the probe intervals", author: "holden", minutesAgo: 730, draft: false, labels: [], ci: .success),
+            PullSpec(repo: medina, number: 138, title: "Copy pass: what the Belt builds and why", author: "avasarala", minutesAgo: 850, draft: false, labels: [], ci: .success),
+            PullSpec(repo: rocinante, number: 9, title: "Add a rate-limit footer to the ops console", author: "alex-k", minutesAgo: 980, draft: false, labels: [], ci: .success),
+            PullSpec(repo: donnager, number: 66, title: "Split the editor toolbar out of the footer", author: "bobbie", minutesAgo: 1200, draft: false, labels: [], ci: .failure),
+            PullSpec(repo: tycho, number: 45, title: "Move the migration notes into the handbook", author: "drummer", minutesAgo: 1500, draft: false, labels: [], ci: .success),
+            PullSpec(repo: nauvoo, number: 21, title: "Expose the Ganymede warehouse views to the dashboard", author: "prax", minutesAgo: 1800, draft: true, labels: [], ci: .none),
+            PullSpec(repo: gate, number: 7, title: "Add the maintenance window banner", author: "elvi", minutesAgo: 2200, draft: false, labels: [], ci: .success),
+            PullSpec(repo: medina, number: 131, title: "Use the new Tycho brand font everywhere", author: "fred-j", minutesAgo: 2700, draft: false, labels: [], ci: .success),
+            PullSpec(repo: rocinante, number: 8, title: "Show burn status from the head commit", author: "holden", minutesAgo: 3100, draft: false, labels: [], ci: .success),
+            PullSpec(repo: donnager, number: 61, title: "Bump the docking dependencies group across 2 directories", author: "mcrn-bot[bot]", minutesAgo: 3600, draft: false, labels: [], ci: .success),
+            PullSpec(repo: tycho, number: 41, title: "Drop the unused drive fonts", author: "amos", minutesAgo: 4100, draft: false, labels: [], ci: .success),
+            PullSpec(repo: nauvoo, number: 18, title: "Add the quote builder handoff", author: "naomi", minutesAgo: 4800, draft: false, labels: [], ci: .success),
+            PullSpec(repo: gate, number: 6, title: "Trim the status page payload", author: "elvi", minutesAgo: 5500, draft: false, labels: [], ci: .success),
+            PullSpec(repo: rocinante, number: 7, title: "Prefetch the next page of transit windows", author: "alex-k", minutesAgo: 6300, draft: false, labels: [], ci: .success),
         ]
 
         var pullRequestsByOwner: [String: [PullRequestRow]] = [:]
@@ -153,6 +154,7 @@ struct DemoData {
                 author: spec.author,
                 createdAt: now.addingTimeInterval(-spec.minutesAgo * 60),
                 isDraft: spec.draft,
+                labels: spec.labels,
                 headSHA: sha,
                 url: URL(string: "https://github.com/\(spec.repo.slug)/pull/\(spec.number)")!
             )

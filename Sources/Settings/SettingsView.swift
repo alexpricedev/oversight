@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var storedOwners: Set<String> = []
     @State private var newHiddenRepo = ""
     @State private var hiddenRepoError: String?
+    @State private var newOrganization = ""
+    @State private var organizationError: String?
 
     private var sortedHidden: [String] {
         env.settings.hiddenRepos.sorted()
@@ -33,6 +35,60 @@ struct SettingsView: View {
                 Button("Add owner…") {
                     isAddingOwner = true
                 }
+            }
+
+            Section("Organizations") {
+                let organizations = env.model.organizations
+                if organizations.isEmpty {
+                    Text("No organizations found yet. Organizations with repositories your token can see appear here after a refresh, or add one below.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(organizations) { organization in
+                        Toggle(isOn: Binding(
+                            get: { env.settings.includesOrg(organization.owner.login) },
+                            set: { isIncluded in
+                                if isIncluded {
+                                    env.settings.includeOrg(organization.owner.login)
+                                } else {
+                                    env.settings.excludeOrg(organization.owner.login)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(organization.owner.login)
+                                        .fontWeight(.medium)
+                                    Badge(text: "Organization")
+                                }
+                                Text(organization.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    TextField("organization", text: $newOrganization)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addOrganization() }
+                    Button("Add") {
+                        addOrganization()
+                    }
+                    .disabled(newOrganization.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                if let organizationError {
+                    Text(organizationError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                Text("Organization repositories are read with the token of the account that belongs to them.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             Section("Repositories to hide") {
@@ -165,6 +221,17 @@ struct SettingsView: View {
                 removingOwner = owner
             }
         }
+    }
+
+    private func addOrganization() {
+        let login = newOrganization.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !login.isEmpty, !login.contains("/"), !login.contains(" ") else {
+            organizationError = "Use the organization's login, with no slashes or spaces."
+            return
+        }
+        organizationError = nil
+        env.settings.includeOrg(login)
+        newOrganization = ""
     }
 
     private func addHiddenRepo() {
