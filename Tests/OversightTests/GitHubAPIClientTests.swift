@@ -352,4 +352,54 @@ struct GitHubAPIClientTests {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    @Test("A 422 carries GitHub's explanation and the endpoint that failed")
+    func validationFailureIsExplained() async {
+        let body = Data(#"{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid","message":"The listed users and repositories cannot be searched."}]}"#.utf8)
+        let transport = StubTransport { _ in
+            .init(status: 422, headers: ["Content-Type": "application/json"], body: body)
+        }
+        let client = makeClient(transport)
+
+        do {
+            _ = try await client.listRepos(account: owner)
+            Issue.record("Expected an error")
+        } catch let error as GitHubError {
+            guard case let .server(status, message) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(status == 422)
+            #expect(message.contains("The listed users and repositories cannot be searched."))
+            #expect(message.contains("/user/repos"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("An unapproved organization's issue search explains the approval wait")
+    func organizationSearchNeedsApproval() async {
+        let body = Data(#"{"message":"Validation Failed","errors":[{"resource":"Search","field":"q","code":"invalid"}]}"#.utf8)
+        let transport = StubTransport { _ in
+            .init(status: 422, headers: ["Content-Type": "application/json"], body: body)
+        }
+        let client = makeClient(transport)
+
+        do {
+            _ = try await client.openIssues(
+                owner: Owner(login: "wearenaitiv", kind: .organization),
+                account: "wearenaitiv"
+            )
+            Issue.record("Expected an error")
+        } catch let error as GitHubError {
+            guard case let .forbidden(message) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(message.contains("can't search wearenaitiv's issues"))
+            #expect(message.contains("approves it"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
 }

@@ -112,7 +112,17 @@ actor GitHubAPIClient: GitHubClientProtocol {
                     URLQueryItem(name: "page", value: String(page)),
                 ]
             )
-            let response: SearchResponse = try await fetchValue(url: url, token: token, tokenOwner: account)
+            let response: SearchResponse
+            do {
+                response = try await fetchValue(url: url, token: token, tokenOwner: account)
+            } catch let error as GitHubError {
+                if case .server(422, _) = error {
+                    throw GitHubError.forbidden(
+                        "GitHub can't search \(owner.login)'s issues yet. If \(owner.login) is still approving this token, its private issues will appear once the organization approves it."
+                    )
+                }
+                throw error
+            }
             // Search already filters to issues, but drop anything that is a
             // pull request so the two sections can never overlap.
             rows.append(contentsOf: response.items.compactMap { $0.toIssueRow() })
@@ -292,10 +302,10 @@ actor GitHubAPIClient: GitHubClientProtocol {
             throw GitHubError.notFound
 
         default:
-            throw GitHubError.server(
-                status: response.statusCode,
-                message: Self.message(from: data) ?? "Unexpected response."
-            )
+            let body = Self.message(from: data) ?? "Unexpected response."
+            // A 422 says nothing without the endpoint, so name it.
+            let detail = response.statusCode == 422 ? " (\(url.path))" : ""
+            throw GitHubError.server(status: response.statusCode, message: body + detail)
         }
     }
 
@@ -316,7 +326,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
     // MARK: - Helpers
 
     private static func message(from data: Data) -> String? {
-        (try? JSONDecoder().decode(ErrorPayload.self, from: data))?.message
+        (try? JSONDecoder().decode(ErrorPayload.self, from: data))?.summary
     }
 
     private static func intHeader(_ name: String, in response: HTTPURLResponse) -> Int? {

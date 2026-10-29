@@ -134,9 +134,43 @@ struct SearchItem: Decodable {
     }
 }
 
-/// The shape of GitHub's error bodies.
+/// The shape of GitHub's error bodies. `errors` is usually an array of
+/// objects, and "Validation Failed" on its own tells nobody anything, so pull
+/// the first explanation out of it.
 struct ErrorPayload: Decodable {
+    private struct Detail: Decodable {
+        let message: String?
+        let resource: String?
+        let field: String?
+        let code: String?
+
+        var text: String? {
+            if let message, !message.isEmpty {
+                return message
+            }
+            let parts = [resource, field, code].compactMap(\.self)
+            return parts.isEmpty ? nil : parts.joined(separator: " ")
+        }
+    }
+
     let message: String
+    let details: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case message, errors
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        message = (try? container.decode(String.self, forKey: .message)) ?? "Unexpected response."
+        details = (try? container.decode([Detail].self, forKey: .errors))?
+            .compactMap(\.text) ?? []
+    }
+
+    var summary: String {
+        guard let detail = details.first, detail != message else { return message }
+        return "\(message): \(detail)"
+    }
 }
 
 /// One entry from `GET /repos/{owner}/{repo}/pulls?state=open`. Unlike the
