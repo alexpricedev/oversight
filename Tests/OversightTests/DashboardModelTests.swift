@@ -390,4 +390,30 @@ struct DashboardModelTests {
         #expect(model.pullRequestRows.isEmpty)
         #expect(model.organizations.map(\.owner.login) == ["wearenaitiv"])
     }
+
+    @Test("Refresh during a pass is queued, not dropped")
+    func refreshWhileRefreshingIsQueued() async {
+        let client = FakeGitHubClient(
+            reposByOwner: ["alexpricedev": [Sample.atlas]],
+            runsByRepo: [Sample.atlas.id: [Sample.run(id: 1)]]
+        )
+        let model = makeModel(client: client, settings: makeSettings())
+
+        await client.holdListRepos()
+        let pass = Task { await model.refreshAll() }
+        while await client.listRepoCalls == 0 {
+            await Task.yield()
+        }
+        #expect(model.isRefreshing)
+
+        // The user clicks Refresh while that pass is still fetching.
+        await model.refreshAll()
+        await client.releaseListRepos()
+        await pass.value
+
+        // The in-flight pass plus the queued forced pass, not just one.
+        let calls = await client.listRepoCalls
+        #expect(calls == 2)
+        #expect(model.isRefreshing == false)
+    }
 }

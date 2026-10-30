@@ -19,6 +19,24 @@ actor FakeGitHubClient: GitHubClientProtocol {
     private(set) var issueCalls: [IssueCall] = []
     private(set) var accountsUsed: Set<String> = []
 
+    /// Holds the next `listRepos` call until `releaseListRepos`, so a test can
+    /// click refresh while a pass is genuinely in flight.
+    private var holdsListRepos = false
+    private var listReposWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func holdListRepos() {
+        holdsListRepos = true
+    }
+
+    func releaseListRepos() {
+        holdsListRepos = false
+        let waiters = listReposWaiters
+        listReposWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     struct IssueCall: Equatable {
         let owner: String
         let kind: OwnerKind
@@ -68,6 +86,9 @@ actor FakeGitHubClient: GitHubClientProtocol {
     func listRepos(account: Owner) async throws -> [Repo] {
         listRepoCalls += 1
         accountsUsed.insert(account.login)
+        if holdsListRepos {
+            await withCheckedContinuation { listReposWaiters.append($0) }
+        }
         if let error = ownerErrors[account.login] { throw error }
         return reposByOwner[account.login] ?? []
     }

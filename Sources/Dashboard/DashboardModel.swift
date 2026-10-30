@@ -47,6 +47,9 @@ final class DashboardModel {
     private var planner = PollPlanner()
     private var pollTask: Task<Void, Never>?
     private var errorsThisPass: Set<String> = []
+    /// A refresh asked for while a pass was already running. It runs straight
+    /// after that pass, so a click is never dropped.
+    private var forcedRefreshQueued = false
 
     init(
         client: any GitHubClientProtocol,
@@ -311,14 +314,27 @@ final class DashboardModel {
     // MARK: - Refresh
 
     private func refreshDue(force: Bool = false) async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        errorsThisPass = []
-        defer {
-            isRefreshing = false
-            lastRefreshed = clock.now
+        guard !isRefreshing else {
+            if force {
+                forcedRefreshQueued = true
+            }
+            return
         }
 
+        isRefreshing = true
+        errorsThisPass = []
+        await runPass(force: force)
+        isRefreshing = false
+        lastRefreshed = clock.now
+
+        if forcedRefreshQueued {
+            forcedRefreshQueued = false
+            await refreshDue(force: true)
+        }
+    }
+
+    /// One full polling pass. `refreshDue` owns the in-flight flag around it.
+    private func runPass(force: Bool) async {
         let ownerList = settings.owners
         for owner in ownerList {
             if let info = await client.rateLimit(for: owner.login) {
