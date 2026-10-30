@@ -51,10 +51,15 @@ struct DashboardView: View {
                 Button {
                     Task { await env.model.refreshAll() }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    if env.model.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Refreshing")
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
                 }
-                .help("Refresh now (⌘R)")
-                .disabled(env.model.isRefreshing)
+                .help(env.model.isRefreshing ? "Refreshing… click to refresh again when this pass finishes" : "Refresh now (⌘R)")
             }
         }
     }
