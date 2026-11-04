@@ -39,6 +39,26 @@ xcodebuild -project Oversight.xcodeproj -scheme Oversight -destination 'platform
 `.pbxproj` by hand, and run `xcodegen generate` after adding, removing or
 renaming a source file.
 
+## Install into /Applications
+
+To use Oversight day to day (from Spotlight, Raycast, Launchpad or the Dock),
+install a Release build:
+
+```sh
+git pull --ff-only
+Scripts/install.sh
+```
+
+The script builds whatever is checked out, quits Oversight if it's running,
+replaces `/Applications/Oversight.app`, and opens the new copy. Run it again
+after every change you want in the installed app; it doesn't update itself.
+
+- The build is signed with the development team in `project.yml`, so it opens
+  without a Gatekeeper warning on this Mac. It isn't notarised, so it isn't
+  ready to hand to other people.
+- The first launch may ask to use the GitHub token in the Keychain. Choose
+  "Always Allow". If the token doesn't show up, add it again in Settings.
+
 ## Setting up a token
 
 Oversight needs one fine-grained personal access token per account (a user, or
