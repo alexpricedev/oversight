@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A tappable dashboard row. Every row opens its subject on github.com.
@@ -53,6 +54,18 @@ struct DashboardRow<Content: View, Trailing: View>: View {
         .background(isHovering ? Color.accentColor.opacity(0.08) : Color.clear)
         .onHover { isHovering = $0 }
         .help(url?.absoluteString ?? "")
+        .contextMenu {
+            if let url {
+                Button("Copy GitHub URL", systemImage: "doc.on.doc") {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(url.absoluteString, forType: .string)
+                }
+                Button("Open on GitHub", systemImage: "arrow.up.right") {
+                    openURL(url)
+                }
+            }
+        }
     }
 }
 
