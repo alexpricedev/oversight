@@ -1,7 +1,7 @@
 import Foundation
 
 /// The combined CI state of the runs for a pull request's head commit.
-enum CIRollup: String, Hashable, CaseIterable {
+enum CIRollup: String, Hashable, CaseIterable, Codable {
     case none
     case pending
     case success

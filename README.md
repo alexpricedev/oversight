@@ -164,6 +164,13 @@ logged under subsystem `com.chptrs.oversight`, category `refresh`:
 log stream --level info --predicate 'subsystem == "com.chptrs.oversight"'
 ```
 
+The last data is saved to `~/Library/Application Support/Oversight/snapshot.json`
+after a refresh (at most once a minute) and when the window closes, so the next
+launch opens already filled. The footer shows the snapshot's time until the first
+refresh lands. The file holds repository names and pull request and issue titles,
+never tokens; a removed account's data leaves it on the next save. Deleting the
+file is safe.
+
 Polling pauses when the window is closed or minimised, when the app is hidden,
 when the Mac sleeps, or when the session locks. Reopening the window refreshes
 immediately. ⌘R forces a full refresh.

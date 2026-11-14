@@ -32,7 +32,7 @@ struct RepoID: Identifiable, Hashable, Codable, CustomStringConvertible {
     }
 }
 
-struct Repo: Identifiable, Hashable {
+struct Repo: Identifiable, Hashable, Codable {
     let id: RepoID
     let isPrivate: Bool
     let isFork: Bool
