@@ -17,6 +17,11 @@ actor FakeGitHubClient: GitHubClientProtocol {
     private(set) var listRepoCalls = 0
     private(set) var runsRequests: [RepoID] = []
     private(set) var issueCalls: [IssueCall] = []
+    private(set) var pullsRequests: [RepoID] = []
+    private(set) var ciRequests: [String] = []
+    /// Makes the search report that it was cut short, so it can't say which
+    /// repositories have pull requests.
+    var searchIsTruncated = false
     private(set) var accountsUsed: Set<String> = []
 
     /// Holds the next `listRepos` call until `releaseListRepos`, so a test can
@@ -35,6 +40,32 @@ actor FakeGitHubClient: GitHubClientProtocol {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+
+    /// Holds every `openPullRequests` call until `releasePullRequests`, so a
+    /// test can look at the dashboard while pull requests are still loading.
+    private var holdsPullRequests = false
+    private var pullRequestWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func holdPullRequests() {
+        holdsPullRequests = true
+    }
+
+    func releasePullRequests() {
+        holdsPullRequests = false
+        let waiters = pullRequestWaiters
+        pullRequestWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    var waitingPullRequestCount: Int {
+        pullRequestWaiters.count
+    }
+
+    func setSearchTruncated(_ truncated: Bool) {
+        searchIsTruncated = truncated
     }
 
     struct IssueCall: Equatable {
@@ -73,6 +104,10 @@ actor FakeGitHubClient: GitHubClientProtocol {
         ownerErrors[owner] = error
     }
 
+    func setPullRequests(_ rows: [PullRequestRow], for owner: String) {
+        pullRequestsByOwner[owner] = rows
+    }
+
     func setRepos(_ repos: [Repo], for owner: String) {
         reposByOwner[owner] = repos
     }
@@ -80,6 +115,8 @@ actor FakeGitHubClient: GitHubClientProtocol {
     func clearRecordings() {
         runsRequests = []
         issueCalls = []
+        pullsRequests = []
+        ciRequests = []
         accountsUsed = []
     }
 
@@ -102,21 +139,32 @@ actor FakeGitHubClient: GitHubClientProtocol {
     }
 
     func openPullRequests(repo: RepoID, account: String) async throws -> [PullRequestRow] {
+        pullsRequests.append(repo)
         accountsUsed.insert(account)
+        if holdsPullRequests {
+            await withCheckedContinuation { pullRequestWaiters.append($0) }
+        }
         if let error = repoErrors[repo] { throw error }
         if let error = ownerErrors[account] { throw error }
         return pullRequestsByOwner.values.joined().filter { $0.repo == repo }
     }
 
-    func openIssues(owner: Owner, account: String) async throws -> [IssueRow] {
+    func openItems(owner: Owner, account: String) async throws -> OpenItems {
         issueCalls.append(IssueCall(owner: owner.login, kind: owner.kind, account: account))
         accountsUsed.insert(account)
         if let error = ownerErrors[owner.login] { throw error }
         if let error = ownerErrors[account] { throw error }
-        return issuesByOwner[owner.login] ?? []
+        let pullRequestRepos = pullRequestsByOwner.values.joined()
+            .map(\.repo)
+            .filter { $0.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
+        return OpenItems(
+            issues: issuesByOwner[owner.login] ?? [],
+            pullRequestRepos: searchIsTruncated ? nil : Set(pullRequestRepos)
+        )
     }
 
     func ciRollup(repo: RepoID, account: String, headSHA: String) async throws -> CIRollup {
+        ciRequests.append("\(repo.slug)@\(headSHA)")
         accountsUsed.insert(account)
         if let error = ownerErrors[account] { throw error }
         return ciByKey["\(repo.slug)@\(headSHA)"] ?? .none

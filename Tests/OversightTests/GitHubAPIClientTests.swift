@@ -120,22 +120,76 @@ struct GitHubAPIClientTests {
         #expect(query == "open")
     }
 
+    /// The `q` parameter of a search request.
+    private static func searchQuery(_ request: URLRequest) -> String {
+        request.url
+            .flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+            .queryItems?
+            .first { $0.name == "q" }?
+            .value ?? ""
+    }
+
+    private static let emptySearch = Data(#"{"total_count":0,"items":[]}"#.utf8)
+
     @Test("Issue search results drop anything that is a pull request")
     func mapsIssuesWithoutPullRequests() async throws {
-        let transport = StubTransport { _ in
-            try .json(Fixtures.data("search_issues"))
+        let transport = StubTransport { request in
+            Self.searchQuery(request).contains("is:pr")
+                ? try .json(Fixtures.data("search_pull_requests"))
+                : try .json(Fixtures.data("search_issues"))
         }
         let client = makeClient(transport)
 
-        let rows = try await client.openIssues(owner: owner, account: owner.login)
+        let items = try await client.openItems(owner: owner, account: owner.login)
 
-        #expect(rows.map(\.number).sorted() == [33, 34])
-        #expect(rows.first { $0.number == 33 }?.labels == ["bug", "ci"])
+        #expect(items.issues.map(\.number).sorted() == [33, 34])
+        #expect(items.issues.first { $0.number == 33 }?.labels == ["bug", "ci"])
+        #expect(items.pullRequestRepos == [
+            RepoID(owner: "alexpricedev", name: "atlas"),
+            RepoID(owner: "alexpricedev", name: "altex"),
+        ])
+    }
+
+    @Test("A pull request search cut short can't say which repositories have pull requests")
+    func truncatedSearchHasNoPullRequestRepos() async throws {
+        // Every page holds one item of 5,000, so ten pages never reach the end.
+        var page = try #require(
+            JSONSerialization.jsonObject(with: Fixtures.data("search_pull_requests")) as? [String: Any]
+        )
+        page["total_count"] = 5000
+        page["items"] = (page["items"] as? [Any]).map { Array($0.prefix(1)) }
+        let body = try JSONSerialization.data(withJSONObject: page)
+        let transport = StubTransport { request in
+            Self.searchQuery(request).contains("is:pr") ? .json(body) : .json(Self.emptySearch)
+        }
+        let client = makeClient(transport, pageSize: 1)
+
+        let items = try await client.openItems(owner: owner, account: owner.login)
+
+        #expect(items.pullRequestRepos == nil)
+        let requests = await transport.recordedRequests()
+        #expect(requests.filter { Self.searchQuery($0).contains("is:pr") }.count == 10)
+    }
+
+    @Test("A failed pull request search still returns the issues")
+    func failedPullRequestSearchKeepsIssues() async throws {
+        let transport = StubTransport { request in
+            Self.searchQuery(request).contains("is:pr")
+                ? .init(status: 422, headers: [:], body: Data(#"{"message":"Validation Failed"}"#.utf8))
+                : try .json(Fixtures.data("search_issues"))
+        }
+        let client = makeClient(transport)
+
+        let items = try await client.openItems(owner: owner, account: owner.login)
+
+        #expect(items.issues.map(\.number).sorted() == [33, 34])
+        #expect(items.pullRequestRepos == nil)
     }
 
     @Test("Issue search follows pages so the count is not capped at one page")
     func paginatesIssues() async throws {
         let transport = StubTransport { request in
+            guard !Self.searchQuery(request).contains("is:pr") else { return .json(Self.emptySearch) }
             let page = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
                 .queryItems?
                 .first { $0.name == "page" }?
@@ -148,28 +202,28 @@ struct GitHubAPIClientTests {
         }
         let client = makeClient(transport, pageSize: 1)
 
-        let rows = try await client.openIssues(owner: owner, account: owner.login)
+        let items = try await client.openItems(owner: owner, account: owner.login)
 
-        #expect(rows.map(\.number).sorted() == [33, 34])
+        #expect(items.issues.map(\.number).sorted() == [33, 34])
+        #expect(items.pullRequestRepos == [])
         let requests = await transport.recordedRequests()
-        #expect(requests.count == 3)
+        #expect(requests.filter { Self.searchQuery($0).contains("is:issue") }.count == 3)
     }
 
-    @Test("For an organization owner the issue search uses the org qualifier")
+    @Test("For an organization owner both searches use the org qualifier")
     func organizationSearchQualifier() async throws {
         let transport = StubTransport { _ in
-            .json(Data(#"{"total_count":0,"items":[]}"#.utf8))
+            .json(Self.emptySearch)
         }
         let client = makeClient(transport)
 
-        _ = try await client.openIssues(owner: Owner(login: "tycho-station", kind: .organization), account: "tycho-station")
+        _ = try await client.openItems(owner: Owner(login: "tycho-station", kind: .organization), account: "tycho-station")
 
         let requests = await transport.recordedRequests()
-        let query = try URLComponents(url: #require(requests.first?.url), resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .first { $0.name == "q" }?
-            .value
-        #expect(query == "is:open is:issue org:tycho-station")
+        #expect(Set(requests.map(Self.searchQuery)) == [
+            "is:open is:issue org:tycho-station",
+            "is:open is:pr org:tycho-station",
+        ])
     }
 
     @Test("CI status comes from the workflow runs for the head SHA")
@@ -251,7 +305,7 @@ struct GitHubAPIClientTests {
         var info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
 
-        _ = try await client.openIssues(owner: owner, account: owner.login)
+        _ = try await client.openItems(owner: owner, account: owner.login)
         info = await client.rateLimit(for: owner.login)
         #expect(info?.remaining == 4990)
         #expect(info?.limit == 5000)
@@ -386,7 +440,7 @@ struct GitHubAPIClientTests {
         let client = makeClient(transport)
 
         do {
-            _ = try await client.openIssues(
+            _ = try await client.openItems(
                 owner: Owner(login: "wearenaitiv", kind: .organization),
                 account: "wearenaitiv"
             )

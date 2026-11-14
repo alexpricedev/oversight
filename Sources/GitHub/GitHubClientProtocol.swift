@@ -19,8 +19,10 @@ protocol GitHubClientProtocol: Sendable {
     /// status can be resolved.
     func openPullRequests(repo: RepoID, account: String) async throws -> [PullRequestRow]
 
-    /// `owner` decides the search scope; `account` supplies the token.
-    func openIssues(owner: Owner, account: String) async throws -> [IssueRow]
+    /// One search for everything open under `owner`: the issues, and which
+    /// repositories have open pull requests. `owner` decides the search scope;
+    /// `account` supplies the token.
+    func openItems(owner: Owner, account: String) async throws -> OpenItems
 
     /// The CI state of one commit, from the workflow runs for that head SHA.
     func ciRollup(repo: RepoID, account: String, headSHA: String) async throws -> CIRollup
@@ -30,4 +32,13 @@ protocol GitHubClientProtocol: Sendable {
     func verifyOwner(login: String, token: String) async throws -> Owner
 
     func rateLimit(for account: String) async -> RateLimitInfo?
+}
+
+/// What one search finds open under an owner.
+struct OpenItems: Hashable {
+    var issues: [IssueRow]
+    /// Repositories with at least one open pull request, so only those need
+    /// their pull requests listed. `nil` when the search was cut short and
+    /// can't say, in which case every repository is asked.
+    var pullRequestRepos: Set<RepoID>?
 }

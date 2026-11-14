@@ -7,6 +7,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
     private let transport: any HTTPTransport
     private let cache: ETagCache
     private let ledger: RateLimitLedger
+    private let gate: RequestGate
     private let tokenProvider: @Sendable (String) -> String?
     private let baseURL: URL
     private let clock: any Clocking
@@ -18,7 +19,8 @@ actor GitHubAPIClient: GitHubClientProtocol {
         tokenProvider: @escaping @Sendable (String) -> String?,
         baseURL: URL = URL(string: "https://api.github.com")!,
         clock: any Clocking = SystemClock(),
-        pageSize: Int = 100
+        pageSize: Int = 100,
+        maxConcurrentRequests: Int = 24
     ) {
         self.transport = transport
         self.tokenProvider = tokenProvider
@@ -27,6 +29,7 @@ actor GitHubAPIClient: GitHubClientProtocol {
         self.pageSize = pageSize
         cache = ETagCache()
         ledger = RateLimitLedger()
+        gate = RequestGate(limit: maxConcurrentRequests)
     }
 
     // MARK: - GitHubClientProtocol
@@ -98,10 +101,44 @@ actor GitHubAPIClient: GitHubClientProtocol {
         return rows
     }
 
-    func openIssues(owner: Owner, account: String) async throws -> [IssueRow] {
+    func openItems(owner: Owner, account: String) async throws -> OpenItems {
         let token = try token(for: account)
-        let query = "is:open is:issue \(owner.kind.searchQualifier):\(owner.login)"
-        var rows: [IssueRow] = []
+        let scope = "\(owner.kind.searchQualifier):\(owner.login)"
+        let isOwned = { (repo: RepoID) in
+            repo.owner.caseInsensitiveCompare(owner.login) == .orderedSame
+        }
+
+        // GitHub wants every issue search to say `is:issue` or `is:pr`, so
+        // issues and pull requests are two searches, run side by side. The
+        // pull request one only says which repositories need their pull
+        // requests listed; if it fails, every repository is asked instead.
+        async let issueSearch = search("is:open is:issue \(scope)", owner: owner, token: token, account: account)
+        async let pullRequestSearch = search("is:open is:pr \(scope)", owner: owner, token: token, account: account)
+
+        let pullRequestRepos: Set<RepoID>? = if let (items, isComplete) = try? await pullRequestSearch, isComplete {
+            Set(items.compactMap(\.repoID).filter(isOwned))
+        } else {
+            nil
+        }
+        // Search already filters to issues, but drop anything that is a pull
+        // request so the two sections can never overlap.
+        let issues = try await issueSearch.items.compactMap { $0.toIssueRow() }
+        return OpenItems(
+            issues: issues.filter { isOwned($0.repo) },
+            pullRequestRepos: pullRequestRepos
+        )
+    }
+
+    /// Every page of one search, up to ten. `isComplete` is false when the
+    /// search had more results than that.
+    private func search(
+        _ query: String,
+        owner: Owner,
+        token: String,
+        account: String
+    ) async throws -> (items: [SearchItem], isComplete: Bool) {
+        var items: [SearchItem] = []
+        var total = 0
         var page = 1
         while page <= 10 {
             let url = try makeURL(
@@ -123,13 +160,12 @@ actor GitHubAPIClient: GitHubClientProtocol {
                 }
                 throw error
             }
-            // Search already filters to issues, but drop anything that is a
-            // pull request so the two sections can never overlap.
-            rows.append(contentsOf: response.items.compactMap { $0.toIssueRow() })
+            total = response.totalCount
+            items.append(contentsOf: response.items)
             if response.items.count < pageSize { break }
             page += 1
         }
-        return rows.filter { $0.repo.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
+        return (items, items.count >= total)
     }
 
     func ciRollup(repo: RepoID, account: String, headSHA: String) async throws -> CIRollup {
@@ -256,10 +292,19 @@ actor GitHubAPIClient: GitHubClientProtocol {
             request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match")
         }
 
+        await gate.enter()
+        let sent: Result<(Data, HTTPURLResponse), any Error>
+        do {
+            sent = try await .success(transport.send(request))
+        } catch {
+            sent = .failure(error)
+        }
+        await gate.leave()
+
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await transport.send(request)
+            (data, response) = try sent.get()
         } catch let error as URLError where error.code == .cancelled {
             throw GitHubError.cancelled
         } catch is CancellationError {

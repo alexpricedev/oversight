@@ -17,8 +17,11 @@ actor DemoGitHubClient: GitHubClientProtocol {
         (data.pullRequests[account] ?? []).filter { $0.repo == repo }
     }
 
-    func openIssues(owner: Owner, account _: String) async throws -> [IssueRow] {
-        data.issues[owner.login] ?? []
+    func openItems(owner: Owner, account _: String) async throws -> OpenItems {
+        let pullRequestRepos = data.pullRequests.values.joined()
+            .map(\.repo)
+            .filter { $0.owner.caseInsensitiveCompare(owner.login) == .orderedSame }
+        return OpenItems(issues: data.issues[owner.login] ?? [], pullRequestRepos: Set(pullRequestRepos))
     }
 
     func ciRollup(repo: RepoID, account _: String, headSHA: String) async throws -> CIRollup {

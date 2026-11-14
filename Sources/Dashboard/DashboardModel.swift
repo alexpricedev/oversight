@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// All of the dashboard's state and the polling loop that keeps it current.
 /// Network access is entirely behind `GitHubClientProtocol`, so tests drive it
@@ -333,8 +334,17 @@ final class DashboardModel {
         }
     }
 
+    /// How many requests of one kind a stage keeps in flight. The client also
+    /// caps the total across stages that run side by side.
+    static let stageConcurrency = 16
+
+    private static let log = Logger(subsystem: "com.chptrs.oversight", category: "refresh")
+
     /// One full polling pass. `refreshDue` owns the in-flight flag around it.
+    /// Results are applied as each request finishes, so rows appear while the
+    /// rest of the pass is still loading.
     private func runPass(force: Bool) async {
+        let pass = StageTimer()
         let ownerList = settings.owners
         for owner in ownerList {
             if let info = await client.rateLimit(for: owner.login) {
@@ -344,57 +354,43 @@ final class DashboardModel {
         if Task.isCancelled { return }
 
         let now = clock.now
+        let client = client
 
         // Repositories, per account: one call returns the account's own repos
         // and those of every organization it belongs to.
-        for account in ownerList {
-            let key = PollKey.repos(account.login)
-            if force || reposByOwner[account.login] == nil || planner.isDue(key, at: now) {
-                await loadRepos(account: account, now: now)
-                if Task.isCancelled { return }
-            }
+        let stage = StageTimer()
+        let dueAccounts = ownerList.filter { account in
+            force || reposByOwner[account.login] == nil || planner.isDue(.repos(account.login), at: now)
         }
-
-        // Workflow runs, for every visible repository that is due.
-        let dueRepos = pollableRepos().filter { repo in
-            force
-                || planner.isDue(.runs(repo.id), at: now)
-                || runsByRepo[repo.id] == nil
+        await forEachConcurrently(dueAccounts, limit: Self.stageConcurrency) { account in
+            await (account, capture { try await client.listRepos(account: account) })
+        } onResult: { loaded in
+            self.applyRepos(loaded.1, for: loaded.0, now: now)
         }
-        let results = await fetchRepoData(dueRepos)
-        apply(results, now: now)
+        Self.log.info("repos: \(dueAccounts.count, privacy: .public) accounts in \(stage.elapsed, privacy: .public)")
         if Task.isCancelled { return }
 
-        // Pull requests and issues, per owner: every account, plus the
-        // organizations that are switched on.
-        for owner in filterOwners {
-            guard let account = accountLogin(for: owner.login) else { continue }
-            if force || pullRequestsByOwner[owner.login] == nil || planner.isDue(.search(owner.login), at: now) {
-                await loadSearch(owner: owner, account: account, now: now)
-                if Task.isCancelled { return }
-            }
-        }
-
-        // CI status of pull request heads.
-        await refreshCI(force: force, now: clock.now)
+        // Workflow runs, and each owner's pull requests, issues and CI, don't
+        // depend on each other, so they load side by side.
+        async let runs: Void = refreshRuns(force: force, now: now)
+        async let owners: Void = refreshOwners(force: force, now: now)
+        _ = await (runs, owners)
 
         // Only clear a token error when every call for that account worked.
         for account in ownerList where !errorsThisPass.contains(account.login) {
             clearHealth(owner: account.login)
         }
+        Self.log.info("pass: done in \(pass.elapsed, privacy: .public) (force: \(force, privacy: .public))")
     }
 
-    private func loadRepos(account: Owner, now: Date) async {
-        do {
-            let repos = try await client.listRepos(account: account)
+    private func applyRepos(_ result: Result<[Repo], GitHubError>, for account: Owner, now: Date) {
+        switch result {
+        case let .success(repos):
             merge(repos: repos, for: account)
-            schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
-        } catch let error as GitHubError {
+        case let .failure(error):
             handle(error: error, owner: account.login)
-            schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
-        } catch {
-            handle(error: .transport(error.localizedDescription), owner: account.login)
         }
+        schedule(.repos(account.login), base: cadence.repoListInterval, owner: account.login, now: now)
     }
 
     /// Splits one account's repo list by owner, so organization repositories
@@ -432,174 +428,173 @@ final class DashboardModel {
         }
     }
 
-    private func fetchRepoData(_ repos: [Repo]) async -> [RepoFetchResult] {
-        // Resolve the token's account before leaving the main actor.
-        let jobs = repos.compactMap { repo -> (Repo, String)? in
-            accountLogin(for: repo.owner).map { (repo, $0) }
-        }
-        guard !jobs.isEmpty else { return [] }
+    /// Workflow runs, for every visible repository that is due.
+    private func refreshRuns(force: Bool, now: Date) async {
+        let stage = StageTimer()
+        let jobs = pollableRepos()
+            .filter { repo in
+                force
+                    || planner.isDue(.runs(repo.id), at: now)
+                    || runsByRepo[repo.id] == nil
+            }
+            // Most recently pushed first: those fill the Actions feed.
+            .sorted { ($0.pushedAt ?? .distantPast) > ($1.pushedAt ?? .distantPast) }
+            // Resolve the token's account before leaving the main actor.
+            .compactMap { repo in accountLogin(for: repo.owner).map { (repo, $0) } }
         let client = client
-        let limit = 4
-        var results: [RepoFetchResult] = []
-        await withTaskGroup(of: RepoFetchResult.self) { group in
-            var iterator = jobs.makeIterator()
-            for _ in 0 ..< limit {
-                guard let (repo, account) = iterator.next() else { break }
-                group.addTask {
-                    await RepoFetchResult.fetch(repo: repo, account: account, client: client)
-                }
-            }
-            while let result = await group.next() {
-                results.append(result)
-                guard let (repo, account) = iterator.next() else { continue }
-                group.addTask {
-                    await RepoFetchResult.fetch(repo: repo, account: account, client: client)
-                }
-            }
+        await forEachConcurrently(jobs, limit: Self.stageConcurrency) { job in
+            await RepoFetchResult.fetch(repo: job.0, account: job.1, client: client)
+        } onResult: { result in
+            self.apply(result, now: now)
         }
-        return results
+        Self.log.info("runs: \(jobs.count, privacy: .public) repos in \(stage.elapsed, privacy: .public)")
     }
 
-    private func apply(_ results: [RepoFetchResult], now: Date) {
-        for result in results {
-            let repo = result.repo
-            // An organization's repos are polled with its account's token, so
-            // health and rate limiting belong to the account.
-            let account = accountLogin(for: repo.owner) ?? repo.owner
-            var hasRunningRun = runsByRepo[repo.id]?.contains(where: \.isActive) ?? false
+    private func apply(_ result: RepoFetchResult, now: Date) {
+        let repo = result.repo
+        // An organization's repos are polled with its account's token, so
+        // health and rate limiting belong to the account.
+        let account = accountLogin(for: repo.owner) ?? repo.owner
+        var hasRunningRun = runsByRepo[repo.id]?.contains(where: \.isActive) ?? false
 
-            switch result.runs {
-            case let .success(runs):
-                runsByRepo[repo.id] = runs
-                hasRunningRun = runs.contains(where: \.isActive)
-                repoErrors[repo.id] = nil
-            case let .failure(error):
-                handle(error: error, owner: account)
-                if error != .cancelled {
-                    repoErrors[repo.id] = error.shortMessage
+        switch result.runs {
+        case let .success(runs):
+            runsByRepo[repo.id] = runs
+            hasRunningRun = runs.contains(where: \.isActive)
+            repoErrors[repo.id] = nil
+        case let .failure(error):
+            handle(error: error, owner: account)
+            if error != .cancelled {
+                repoErrors[repo.id] = error.shortMessage
+            }
+        }
+
+        let interval = cadence.repoInterval(
+            hasRunningRun: hasRunningRun,
+            lastPush: repo.pushedAt,
+            now: now
+        )
+        schedule(.runs(repo.id), base: interval, owner: account, now: now)
+    }
+
+    /// Pull requests, issues and CI, for every account plus the organizations
+    /// that are switched on. Owners load side by side.
+    private func refreshOwners(force: Bool, now: Date) async {
+        await withTaskGroup(of: Void.self) { group in
+            for owner in filterOwners {
+                guard let account = accountLogin(for: owner.login) else { continue }
+                group.addTask {
+                    await self.refreshOwner(owner, account: account, force: force, now: now)
                 }
             }
-
-            let interval = cadence.repoInterval(
-                hasRunningRun: hasRunningRun,
-                lastPush: repo.pushedAt,
-                now: now
-            )
-            schedule(.runs(repo.id), base: interval, owner: account, now: now)
         }
+    }
+
+    private func refreshOwner(_ owner: Owner, account: String, force: Bool, now: Date) async {
+        if force || pullRequestsByOwner[owner.login] == nil || planner.isDue(.search(owner.login), at: now) {
+            await loadSearch(owner: owner, account: account, now: now)
+        }
+        if Task.isCancelled { return }
+        // CI starts as soon as this owner's pull requests are in.
+        await refreshCI(for: pullRequestsByOwner[owner.login] ?? [], force: force, now: clock.now)
     }
 
     private func loadSearch(owner: Owner, account: String, now: Date) async {
-        async let issuesResult = capture {
-            try await client.openIssues(owner: owner, account: account)
+        let stage = StageTimer()
+        let client = client
+        let items = await capture {
+            try await client.openItems(owner: owner, account: account)
         }
 
         // Pull requests come from each repository, because only that endpoint
-        // carries the head SHA the CI status needs.
-        let repos = reposByOwner[owner.login] ?? []
-        let pullRequestResults = await fetchPullRequests(repos, owner: owner.login, account: account)
+        // carries the head SHA the CI status needs. The search says which
+        // repositories have any open; if it failed or was cut short, every
+        // repository is asked.
+        var repos = reposByOwner[owner.login] ?? []
+        switch items {
+        case let .success(found):
+            issuesByOwner[owner.login] = found.issues
+            if let withPullRequests = found.pullRequestRepos {
+                let slugs = Set(withPullRequests.map { $0.slug.lowercased() })
+                repos = repos.filter { slugs.contains($0.id.slug.lowercased()) }
+            } else {
+                Self.log.info("search \(owner.login, privacy: .public): cut short, asking every repository")
+            }
+        case let .failure(error):
+            Self.log.info("search \(owner.login, privacy: .public): failed (\(error.shortMessage, privacy: .public)), asking every repository")
+            handle(error: error, owner: account)
+        }
 
-        var pullRequests: [PullRequestRow] = []
-        var failures: [RepoID: GitHubError] = [:]
-        for (repo, result) in pullRequestResults {
+        await forEachConcurrently(repos, limit: Self.stageConcurrency) { repo in
+            await (repo.id, capture { try await client.openPullRequests(repo: repo.id, account: account) })
+        } onResult: { loaded in
+            let (repo, result) = loaded
             switch result {
             case let .success(rows):
-                pullRequests.append(contentsOf: rows)
+                var current = self.pullRequestsByOwner[owner.login] ?? []
+                current.removeAll { $0.repo == repo }
+                current.append(contentsOf: rows)
+                self.pullRequestsByOwner[owner.login] = current
             case let .failure(error):
-                guard error != .cancelled else { continue }
-                failures[repo] = error
+                // Keep the last good pull requests for a repository that failed.
+                guard error != .cancelled else { return }
+                self.repoErrors[repo] = error.shortMessage
+                self.handle(error: error, owner: account)
             }
         }
 
-        // Keep the last good pull requests for repositories that failed.
-        if !failures.isEmpty {
-            let previous = pullRequestsByOwner[owner.login] ?? []
-            pullRequests.append(contentsOf: previous.filter { failures.keys.contains($0.repo) })
-            for (repo, error) in failures {
-                repoErrors[repo] = error.shortMessage
-                handle(error: error, owner: account)
-            }
-        }
-        pullRequestsByOwner[owner.login] = pullRequests
-
-        if case let .failure(error) = await issuesResult {
-            handle(error: error, owner: account)
-        } else if case let .success(rows) = await issuesResult {
-            issuesByOwner[owner.login] = rows
+        // Drop repositories that no longer have open pull requests.
+        let asked = Set(repos.map(\.id))
+        pullRequestsByOwner[owner.login] = (pullRequestsByOwner[owner.login] ?? []).filter {
+            asked.contains($0.repo)
         }
 
         schedule(.search(owner.login), base: cadence.searchInterval, owner: account, now: now)
+        Self.log.info(
+            "search \(owner.login, privacy: .public): 1 search + \(repos.count, privacy: .public) pull request lists in \(stage.elapsed, privacy: .public)"
+        )
     }
 
-    private func fetchPullRequests(
-        _ repos: [Repo],
-        owner _: String,
-        account: String
-    ) async -> [(RepoID, Result<[PullRequestRow], GitHubError>)] {
-        guard !repos.isEmpty else { return [] }
-        let client = client
-        let limit = 4
-        var results: [(RepoID, Result<[PullRequestRow], GitHubError>)] = []
-        await withTaskGroup(of: (RepoID, Result<[PullRequestRow], GitHubError>).self) { group in
-            var iterator = repos.makeIterator()
-            for _ in 0 ..< limit {
-                guard let repo = iterator.next() else { break }
-                group.addTask {
-                    let result = await capture {
-                        try await client.openPullRequests(repo: repo.id, account: account)
-                    }
-                    return (repo.id, result)
-                }
-            }
-            while let result = await group.next() {
-                results.append(result)
-                guard let repo = iterator.next() else { continue }
-                group.addTask {
-                    let result = await capture {
-                        try await client.openPullRequests(repo: repo.id, account: account)
-                    }
-                    return (repo.id, result)
-                }
-            }
-        }
-        return results
-    }
-
-    private func refreshCI(force: Bool, now: Date) async {
-        var shasByRepo: [RepoID: Set<String>] = [:]
-        for pullRequest in pullRequestsByOwner.values.joined() {
+    /// CI status of pull request heads that are due.
+    private func refreshCI(for pullRequests: [PullRequestRow], force: Bool, now: Date) async {
+        let stage = StageTimer()
+        var jobs: [(repo: RepoID, sha: String, account: String)] = []
+        var queued: Set<PollKey> = []
+        for pullRequest in pullRequests {
             // Filters are presentational; CI should keep updating for hidden-by-filter repos.
             guard isOwnerIncluded(pullRequest.repo.owner),
                   !settings.hiddenRepos.contains(pullRequest.repo.slug),
-                  !pullRequest.headSHA.isEmpty
+                  !pullRequest.headSHA.isEmpty,
+                  let account = accountLogin(for: pullRequest.repo.owner)
             else { continue }
-            shasByRepo[pullRequest.repo, default: []].insert(pullRequest.headSHA)
+            let key = PollKey.ci(pullRequest.repo, pullRequest.headSHA)
+            guard queued.insert(key).inserted, force || planner.isDue(key, at: now) else { continue }
+            jobs.append((pullRequest.repo, pullRequest.headSHA, account))
         }
+        guard !jobs.isEmpty else { return }
 
-        for (repo, shas) in shasByRepo {
-            guard let account = accountLogin(for: repo.owner) else { continue }
-            for sha in shas {
-                let key = PollKey.ci(repo, sha)
-                if !force, !planner.isDue(key, at: now) { continue }
-                do {
-                    let rollup = try await client.ciRollup(repo: repo, account: account, headSHA: sha)
-                    var statuses = ciByRepo[repo] ?? [:]
-                    statuses[sha] = rollup
-                    ciByRepo[repo] = statuses
-                    // Keep watching while checks are running; otherwise check
-                    // back in an hour in case the commit is run again.
-                    let base: TimeInterval = rollup == .pending ? cadence.searchInterval : 3600
-                    schedule(.ci(repo, sha), base: base, owner: account, now: now)
-                } catch let error as GitHubError {
-                    if error == .cancelled { continue }
-                    var statuses = ciByRepo[repo] ?? [:]
-                    statuses[sha] = statuses[sha] ?? CIRollup.none
-                    ciByRepo[repo] = statuses
-                } catch {
-                    continue
-                }
+        let client = client
+        await forEachConcurrently(jobs, limit: Self.stageConcurrency) { job in
+            await (job, capture { try await client.ciRollup(repo: job.repo, account: job.account, headSHA: job.sha) })
+        } onResult: { loaded in
+            let (job, result) = loaded
+            var statuses = self.ciByRepo[job.repo] ?? [:]
+            switch result {
+            case let .success(rollup):
+                statuses[job.sha] = rollup
+                self.ciByRepo[job.repo] = statuses
+                // Keep watching while checks are running; otherwise check
+                // back in an hour in case the commit is run again.
+                let base: TimeInterval = rollup == .pending ? self.cadence.searchInterval : 3600
+                self.schedule(.ci(job.repo, job.sha), base: base, owner: job.account, now: now)
+            case .failure(.cancelled):
+                return
+            case .failure:
+                statuses[job.sha] = statuses[job.sha] ?? CIRollup.none
+                self.ciByRepo[job.repo] = statuses
             }
         }
+        Self.log.info("ci: \(jobs.count, privacy: .public) commits in \(stage.elapsed, privacy: .public)")
     }
 
     // MARK: - Helpers

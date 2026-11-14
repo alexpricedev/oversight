@@ -416,4 +416,92 @@ struct DashboardModelTests {
         #expect(calls == 2)
         #expect(model.isRefreshing == false)
     }
+
+    @Test("Pull requests are only listed for repositories the search says have them")
+    func pullRequestsOnlyWhereSearchFindsThem() async throws {
+        let client = try richClient()
+        let model = makeModel(client: client, settings: makeSettings())
+
+        await model.refreshAll()
+
+        let asked = await client.pullsRequests
+        #expect(asked == [Sample.atlas.id])
+        #expect(model.pullRequestRows.count == 1)
+    }
+
+    @Test("A search cut short lists every repository's pull requests")
+    func truncatedSearchAsksEveryRepository() async throws {
+        let client = try richClient()
+        await client.setSearchTruncated(true)
+        let model = makeModel(client: client, settings: makeSettings())
+
+        await model.refreshAll()
+
+        let asked = await client.pullsRequests
+        #expect(Set(asked) == [Sample.atlas.id, Sample.altex.id])
+        #expect(model.pullRequestRows.count == 1)
+    }
+
+    @Test("A pull request that closes drops off once the search stops finding it")
+    func closedPullRequestDropsOff() async throws {
+        let client = try richClient()
+        let model = makeModel(client: client, settings: makeSettings())
+        await model.refreshAll()
+        #expect(model.pullRequestRows.count == 1)
+
+        await client.setPullRequests([], for: "alexpricedev")
+        await client.clearRecordings()
+        await model.refreshAll()
+
+        #expect(model.pullRequestRows.isEmpty)
+        let asked = await client.pullsRequests
+        #expect(asked.isEmpty)
+    }
+
+    @Test("CI status lands for every open pull request head")
+    func ciForSeveralCommits() async {
+        let shas = ["1111111111111111111111111111111111111111",
+                    "2222222222222222222222222222222222222222",
+                    "3333333333333333333333333333333333333333"]
+        let rollups: [CIRollup] = [.success, .failure, .pending]
+        let client = FakeGitHubClient(
+            reposByOwner: ["alexpricedev": [Sample.atlas]],
+            pullRequestsByOwner: ["alexpricedev": shas.enumerated().map { index, sha in
+                Sample.pullRequest(number: index + 1, headSHA: sha)
+            }],
+            ciByKey: Dictionary(uniqueKeysWithValues: zip(shas.map { "alexpricedev/atlas@\($0)" }, rollups))
+        )
+        let model = makeModel(client: client, settings: makeSettings())
+
+        await model.refreshAll()
+
+        let statuses = model.pullRequestRows.sorted { $0.number < $1.number }.map { model.ciStatus(for: $0) }
+        #expect(statuses == rollups)
+        let requests = await client.ciRequests
+        #expect(requests.count == 3)
+    }
+
+    @Test("Workflow runs show while pull requests are still loading")
+    func runsShowBeforePullRequests() async throws {
+        let client = try richClient()
+        let model = makeModel(client: client, settings: makeSettings())
+
+        await client.holdPullRequests()
+        let pass = Task { await model.refreshAll() }
+        var spins = 0
+        while await client.waitingPullRequestCount == 0 || model.actionRows.count < 3, spins < 10000 {
+            await Task.yield()
+            spins += 1
+        }
+
+        #expect(model.isRefreshing)
+        #expect(model.actionRows.count == 3)
+        #expect(model.issueRows.count == 1)
+        #expect(model.pullRequestRows.isEmpty)
+
+        await client.releasePullRequests()
+        await pass.value
+        #expect(model.pullRequestRows.count == 1)
+        #expect(model.isRefreshing == false)
+    }
 }
