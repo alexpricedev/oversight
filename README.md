@@ -141,7 +141,7 @@ archiving them on GitHub.
 | Repo pushed to in the last 7 days | 60 seconds |
 | Any other repo | 10 minutes |
 | Repo list | 10 minutes |
-| Pull requests (per repo) and issues (search) | 60 seconds |
+| Pull requests and issues (search, then per repo) | 60 seconds |
 | CI status while checks are running | 60 seconds |
 | CI status once settled | rechecked hourly, or on ⌘R |
 
@@ -150,6 +150,19 @@ Every response's `ETag` is kept and sent back as `If-None-Match`; a
 `x-ratelimit-remaining` and `x-ratelimit-reset` are read on every response and
 shown in the footer. Below 10% remaining, polling slows to a quarter of the
 normal rate; at zero it waits for the reset.
+
+A refresh fetches in parallel: up to 16 requests per stage and 24 in all.
+Workflow runs and each owner's pull requests, issues and CI load side by side,
+and rows appear as each request lands, most recently pushed repos first. Two
+searches per owner (`is:issue` and `is:pr`) find the issues and the
+repositories with open pull requests, so only those repositories have their
+pull requests listed. If the pull request search fails or has more than ten
+pages of results, every repository is asked instead. Each stage's timing is
+logged under subsystem `com.chptrs.oversight`, category `refresh`:
+
+```sh
+log stream --level info --predicate 'subsystem == "com.chptrs.oversight"'
+```
 
 Polling pauses when the window is closed or minimised, when the app is hidden,
 when the Mac sleeps, or when the session locks. Reopening the window refreshes
