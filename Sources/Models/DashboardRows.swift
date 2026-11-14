@@ -56,7 +56,7 @@ struct ActionRow: Identifiable, Hashable {
     }
 }
 
-struct PullRequestRow: Identifiable, Hashable {
+struct PullRequestRow: Identifiable, Hashable, Codable {
     let id: String
     let repo: RepoID
     let number: Int
@@ -92,7 +92,7 @@ struct PullRequestRow: Identifiable, Hashable {
     }
 }
 
-struct IssueRow: Identifiable, Hashable {
+struct IssueRow: Identifiable, Hashable, Codable {
     let id: String
     let repo: RepoID
     let number: Int

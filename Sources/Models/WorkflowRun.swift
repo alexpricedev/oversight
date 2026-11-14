@@ -54,8 +54,8 @@ enum RunConclusion: String, Hashable {
     }
 }
 
-struct WorkflowRun: Decodable, Hashable, Identifiable {
-    struct HeadCommit: Decodable, Hashable {
+struct WorkflowRun: Codable, Hashable, Identifiable {
+    struct HeadCommit: Codable, Hashable {
         let id: String?
         let message: String?
 

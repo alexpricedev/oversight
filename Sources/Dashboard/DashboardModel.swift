@@ -52,18 +52,35 @@ final class DashboardModel {
     /// after that pass, so a click is never dropped.
     private var forcedRefreshQueued = false
 
+    /// Where the last data is saved between launches. `nil` keeps everything
+    /// in memory, as tests and demo mode do.
+    private let snapshotStore: SnapshotStore?
+    /// Snapshots are written at most this often while polling.
+    static let snapshotInterval: TimeInterval = 60
+    private var lastSnapshotSave: Date?
+    private var snapshotWrite: Task<Void, Never>?
+
     init(
         client: any GitHubClientProtocol,
         settings: AppSettings,
         clock: any Clocking = SystemClock(),
         cadence: PollCadence = PollCadence(),
-        governor: RateLimitGovernor = RateLimitGovernor()
+        governor: RateLimitGovernor = RateLimitGovernor(),
+        snapshotStore: SnapshotStore? = nil
     ) {
         self.client = client
         self.settings = settings
         self.clock = clock
         self.cadence = cadence
         self.governor = governor
+        self.snapshotStore = snapshotStore
+        let timer = StageTimer()
+        if let snapshot = snapshotStore?.load() {
+            restore(snapshot)
+            Self.log.info(
+                "snapshot: restored \(self.knownRepos.count, privacy: .public) repos, \(self.pullRequestRows.count, privacy: .public) pull requests in \(timer.elapsed, privacy: .public)"
+            )
+        }
     }
 
     // MARK: - Derived state
@@ -229,6 +246,7 @@ final class DashboardModel {
         pollTask?.cancel()
         pollTask = nil
         isPolling = false
+        saveSnapshot()
     }
 
     /// Refresh immediately after the window reopens or the Mac wakes, then
@@ -264,29 +282,7 @@ final class DashboardModel {
     /// that are gone, re-reads everything else.
     func settingsDidChange() async {
         let liveOwners = settings.owners
-        let liveLogins = Set(liveOwners.map(\.login))
-        for login in ownerHealth.keys where !liveLogins.contains(login) {
-            ownerHealth[login] = nil
-            rateLimits[login] = nil
-        }
-
-        // Forget accounts that were removed, and the organizations that were
-        // only reachable through them. A switched-off organization keeps its
-        // cached repositories so Settings can still show what it contains.
-        for key in orgAccounts.filter({ !liveLogins.contains($0.value.lowercased()) }).map(\.key) {
-            orgAccounts[key] = nil
-        }
-        for login in Array(reposByOwner.keys) {
-            let isLiveAccount = liveLogins.contains(login.lowercased())
-            let isReachableOrg = orgAccounts[login.lowercased()] != nil
-            guard !isLiveAccount, !isReachableOrg else { continue }
-            reposByOwner[login] = nil
-            pruneState(for: login, keeping: [])
-        }
-
-        if let ownerFilter, !isOwnerIncluded(ownerFilter) {
-            self.ownerFilter = nil
-        }
+        forgetRemovedOwners()
 
         // A replaced token deserves a clean slate.
         for owner in liveOwners {
@@ -309,7 +305,87 @@ final class DashboardModel {
         }
         planner.retain(keys)
         planner.markAllDue(at: clock.now)
+        // Save straight after, so a removed account's data leaves the disk.
+        lastSnapshotSave = nil
         await refreshDue(force: true)
+    }
+
+    /// Drops state for accounts that were removed, and for the organizations
+    /// that were only reachable through them. A switched-off organization keeps
+    /// its cached repositories so Settings can still show what it contains.
+    private func forgetRemovedOwners() {
+        let liveLogins = Set(settings.owners.map(\.login))
+        for login in ownerHealth.keys where !liveLogins.contains(login) {
+            ownerHealth[login] = nil
+            rateLimits[login] = nil
+        }
+        for key in orgAccounts.filter({ !liveLogins.contains($0.value.lowercased()) }).map(\.key) {
+            orgAccounts[key] = nil
+        }
+        for login in Array(reposByOwner.keys) {
+            let isLiveAccount = liveLogins.contains(login.lowercased())
+            let isReachableOrg = orgAccounts[login.lowercased()] != nil
+            guard !isLiveAccount, !isReachableOrg else { continue }
+            reposByOwner[login] = nil
+            pruneState(for: login, keeping: [])
+        }
+
+        if let ownerFilter, !isOwnerIncluded(ownerFilter) {
+            self.ownerFilter = nil
+        }
+    }
+
+    // MARK: - Snapshot
+
+    /// Shows the last saved data straight away. The footer's "Refreshed" time
+    /// is the snapshot's, so old data reads as old until the first pass lands.
+    private func restore(_ snapshot: DashboardSnapshot) {
+        reposByOwner = snapshot.reposByOwner
+        orgAccounts = snapshot.orgAccounts
+        discoveredOrgs = snapshot.discoveredOrgs
+        runsByRepo = snapshot.runsByRepo
+        pullRequestsByOwner = snapshot.pullRequestsByOwner
+        issuesByOwner = snapshot.issuesByOwner
+        ciByRepo = snapshot.ciByRepo
+        lastRefreshed = snapshot.savedAt
+        forgetRemovedOwners()
+    }
+
+    private func saveSnapshotIfDue() {
+        if let lastSnapshotSave, clock.now.timeIntervalSince(lastSnapshotSave) < Self.snapshotInterval {
+            return
+        }
+        saveSnapshot()
+    }
+
+    /// Writes the current data off the main actor, one write after another.
+    private func saveSnapshot() {
+        guard let snapshotStore, let lastRefreshed else { return }
+        lastSnapshotSave = clock.now
+        let snapshot = DashboardSnapshot(
+            savedAt: lastRefreshed,
+            reposByOwner: reposByOwner,
+            orgAccounts: orgAccounts,
+            discoveredOrgs: discoveredOrgs,
+            runsByRepo: runsByRepo,
+            pullRequestsByOwner: pullRequestsByOwner,
+            issuesByOwner: issuesByOwner,
+            ciByRepo: ciByRepo
+        )
+        let previous = snapshotWrite
+        snapshotWrite = Task.detached(priority: .utility) {
+            await previous?.value
+            do {
+                try snapshotStore.save(snapshot)
+            } catch {
+                Self.log.error("snapshot: couldn't save (\(error.localizedDescription, privacy: .public))")
+            }
+        }
+    }
+
+    /// Waits for any snapshot write still in progress.
+    func flushSnapshot() async {
+        await snapshotWrite?.value
     }
 
     // MARK: - Refresh
@@ -327,6 +403,7 @@ final class DashboardModel {
         await runPass(force: force)
         isRefreshing = false
         lastRefreshed = clock.now
+        saveSnapshotIfDue()
 
         if forcedRefreshQueued {
             forcedRefreshQueued = false
@@ -338,7 +415,7 @@ final class DashboardModel {
     /// caps the total across stages that run side by side.
     static let stageConcurrency = 16
 
-    private static let log = Logger(subsystem: "com.chptrs.oversight", category: "refresh")
+    nonisolated private static let log = Logger(subsystem: "com.chptrs.oversight", category: "refresh")
 
     /// One full polling pass. `refreshDue` owns the in-flight flag around it.
     /// Results are applied as each request finishes, so rows appear while the

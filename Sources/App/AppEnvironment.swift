@@ -16,13 +16,14 @@ final class AppEnvironment {
         tokenStore: any TokenStore,
         client: any GitHubClientProtocol,
         clock: any Clocking = SystemClock(),
-        activity: AppActivity = AppActivity()
+        activity: AppActivity = AppActivity(),
+        snapshotStore: SnapshotStore? = nil
     ) {
         self.settings = settings
         self.tokenStore = tokenStore
         self.client = client
         self.activity = activity
-        model = DashboardModel(client: client, settings: settings, clock: clock)
+        model = DashboardModel(client: client, settings: settings, clock: clock, snapshotStore: snapshotStore)
     }
 
     static func live() -> AppEnvironment {
@@ -47,7 +48,12 @@ final class AppEnvironment {
         let client = GitHubAPIClient(tokenProvider: { login in
             (try? tokenStore.token(for: login)) ?? nil
         })
-        return AppEnvironment(settings: settings, tokenStore: tokenStore, client: client)
+        return AppEnvironment(
+            settings: settings,
+            tokenStore: tokenStore,
+            client: client,
+            snapshotStore: SnapshotStore.applicationSupport()
+        )
     }
 
     var repoFilter: String {
